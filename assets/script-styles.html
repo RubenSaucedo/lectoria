@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>lectoria — Script styles</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --fg: #1a1a1f;
+    --muted: #6b6b78;
+    --line: #e5e5e0;
+    --card: #ffffff;
+    --accent: #5b3df5;
+    --accent-soft: #ece8ff;
+
+    --podcast: #d97757;
+    --conv: #5b3df5;
+    --verbatim: #1f9d6e;
+    --dialogue: #cc4d8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14141a;
+      --fg: #eeeef0;
+      --muted: #9999a5;
+      --line: #2a2a32;
+      --card: #1c1c24;
+      --accent: #9180ff;
+      --accent-soft: #2a2447;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 48px 32px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  .header {
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .kicker {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 32px;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+  }
+  .sub { color: var(--muted); max-width: 640px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--bar);
+  }
+  .card[data-style="podcast"]      { --bar: var(--podcast); }
+  .card[data-style="conversational"] { --bar: var(--conv); }
+  .card[data-style="verbatim"]     { --bar: var(--verbatim); }
+  .card[data-style="dialogue"]     { --bar: var(--dialogue); }
+
+  .icon {
+    font-size: 28px;
+    line-height: 1;
+  }
+  .name {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    align-self: flex-start;
+  }
+  .desc {
+    color: var(--fg);
+    margin: 0;
+  }
+  .use {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+  }
+  .use::before {
+    content: "Use when ";
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .footer {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+    font-size: 13px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="kicker">lectoria · script styles</div>
+    <h1>Four ways to turn a document into spoken audio</h1>
+    <p class="sub">From the most produced (a friendly podcast show) to the most faithful (read the doc as-is), plus a two-voice dialogue mode for NotebookLM-style listening.</p>
+  </div>
+
+  <div class="grid">
+    <div class="card" data-style="podcast">
+      <div class="icon">🎙️</div>
+      <h2 class="name">podcast</h2>
+      <span class="badge">most produced</span>
+      <p class="desc">A friendly host rewrites the document as a podcast episode: short welcome, 3–7 chapters, recap, sign-off.</p>
+      <p class="use">you want the material to feel like a real show.</p>
+    </div>
+
+    <div class="card" data-style="conversational">
+      <div class="icon">💬</div>
+      <h2 class="name">conversational</h2>
+      <span class="badge">default · ~70% fidelity</span>
+      <p class="desc">Natural spoken read-along. No welcome, no sign-off, but the model restructures lists, merges short paragraphs, and adds spoken signposts so it flows by ear.</p>
+      <p class="use">you want to understand a doc on the go without it sounding like a show.</p>
+    </div>
+
+    <div class="card" data-style="verbatim">
+      <div class="icon">📖</div>
+      <h2 class="name">verbatim</h2>
+      <span class="badge">~95% fidelity</span>
+      <p class="desc">Read the document essentially as-is, in the requested language. No invented intro/outro, no host banter, just the doc — lightly cleaned for spoken delivery.</p>
+      <p class="use">you want to listen now and dig back into the doc later.</p>
+    </div>
+
+    <div class="card" data-style="dialogue">
+      <div class="icon">👥</div>
+      <h2 class="name">dialogue</h2>
+      <span class="badge">two-voice · notebooklm-style</span>
+      <p class="desc">Two named speakers discuss the material in natural back-and-forth. Each utterance carries a speaker id so the TTS stage dispatches to the right voice per language.</p>
+      <p class="use">you want a hosted-feel without a single-narrator monologue.</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    Pick a style at the CLI with <code>--style &lt;name&gt;</code>, or programmatically via <code>ScriptStyle</code> in the library API. See <a href="../README.md">README</a> for the full reference.
+  </div>
+</div>
+</body>
+</html>

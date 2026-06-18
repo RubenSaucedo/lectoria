@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>lectoria — Pipeline</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --fg: #1a1a1f;
+    --muted: #6b6b78;
+    --line: #e5e5e0;
+    --card: #ffffff;
+    --accent: #5b3df5;
+    --accent-soft: #ece8ff;
+
+    --stage-input: #1e88e5;
+    --stage-input-soft: #e3f0fb;
+    --stage-llm: #5b3df5;
+    --stage-llm-soft: #ece8ff;
+    --stage-audio: #1f9d6e;
+    --stage-audio-soft: #e0f4ec;
+    --stage-output: #d97757;
+    --stage-output-soft: #fbe9e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14141a;
+      --fg: #eeeef0;
+      --muted: #9999a5;
+      --line: #2a2a32;
+      --card: #1c1c24;
+      --accent: #9180ff;
+      --accent-soft: #2a2447;
+
+      --stage-input-soft: #1a2a3a;
+      --stage-llm-soft: #2a2447;
+      --stage-audio-soft: #173127;
+      --stage-output-soft: #3a221a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 48px 32px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  .header {
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .kicker {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 32px;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+  }
+  .sub { color: var(--muted); max-width: 720px; }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 24px 0 32px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .legend-dot.input  { background: var(--stage-input); }
+  .legend-dot.llm    { background: var(--stage-llm); }
+  .legend-dot.audio  { background: var(--stage-audio); }
+  .legend-dot.output { background: var(--stage-output); }
+
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 8px;
+    align-items: stretch;
+  }
+  @media (max-width: 960px) {
+    .flow { grid-template-columns: repeat(2, 1fr); }
+    .stage::after { display: none; }
+  }
+  @media (max-width: 540px) {
+    .flow { grid-template-columns: 1fr; }
+  }
+
+  .stage {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+  }
+  .stage::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--bar);
+    border-radius: 12px 12px 0 0;
+  }
+  .stage[data-kind="input"]  { --bar: var(--stage-input);  --soft: var(--stage-input-soft);  --col: var(--stage-input); }
+  .stage[data-kind="llm"]    { --bar: var(--stage-llm);    --soft: var(--stage-llm-soft);    --col: var(--stage-llm); }
+  .stage[data-kind="audio"]  { --bar: var(--stage-audio);  --soft: var(--stage-audio-soft);  --col: var(--stage-audio); }
+  .stage[data-kind="output"] { --bar: var(--stage-output); --soft: var(--stage-output-soft); --col: var(--stage-output); }
+
+  .stage-step {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .stage-name {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--col);
+  }
+  .stage-desc {
+    margin: 0;
+    font-size: 13px;
+    color: var(--fg);
+  }
+  .stage-contract {
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    color: var(--col);
+    background: var(--soft);
+    padding: 6px 8px;
+    border-radius: 6px;
+    text-align: center;
+  }
+
+  .panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-top: 48px;
+  }
+  @media (max-width: 720px) {
+    .panels { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .panel h3 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    font-weight: 600;
+  }
+  .panel ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .panel li code {
+    color: var(--accent);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+  }
+
+  .footer {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="kicker">lectoria · pipeline</div>
+    <h1>From a document to multilingual audio in seven stages</h1>
+    <p class="sub">Each stage is a small interface with a single responsibility. The orchestrator (<code>runPipeline</code>) wires them together and fans out per target language at the script stage. Pass <code>RunOverrides</code> to swap any stage for your own implementation.</p>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><span class="legend-dot input"></span> Input + parse</div>
+    <div class="legend-item"><span class="legend-dot llm"></span> LLM (Azure OpenAI)</div>
+    <div class="legend-item"><span class="legend-dot audio"></span> Audio (Azure Speech)</div>
+    <div class="legend-item"><span class="legend-dot output"></span> Output</div>
+  </div>
+
+  <div class="flow">
+    <div class="stage" data-kind="input">
+      <span class="stage-step">step 1</span>
+      <h3 class="stage-name">ingest</h3>
+      <p class="stage-desc">Pulls bytes from a path, folder, or URL.</p>
+      <div class="stage-contract">→ SourceFile</div>
+    </div>
+
+    <div class="stage" data-kind="input">
+      <span class="stage-step">step 2</span>
+      <h3 class="stage-name">parse</h3>
+      <p class="stage-desc">PDF / DOCX / MD / HTML → normalized document with sections + paragraphs.</p>
+      <div class="stage-contract">→ Document</div>
+    </div>
+
+    <div class="stage" data-kind="llm">
+      <span class="stage-step">step 3</span>
+      <h3 class="stage-name">script</h3>
+      <p class="stage-desc">Generates the source-language script (podcast / conversational / verbatim / dialogue). Chunks by section to dodge per-minute TPM caps.</p>
+      <div class="stage-contract">→ PodcastScript</div>
+    </div>
+
+    <div class="stage" data-kind="llm">
+      <span class="stage-step">step 4</span>
+      <h3 class="stage-name">translate</h3>
+      <p class="stage-desc">Re-renders the script in every target language; preserves style + speaker tags.</p>
+      <div class="stage-contract">→ PodcastScript[]</div>
+    </div>
+
+    <div class="stage" data-kind="audio">
+      <span class="stage-step">step 5</span>
+      <h3 class="stage-name">synthesize</h3>
+      <p class="stage-desc">SSML per utterance, voice dispatch per speaker, segment-by-segment Azure Speech calls.</p>
+      <div class="stage-contract">→ SynthesizedAudio</div>
+    </div>
+
+    <div class="stage" data-kind="audio">
+      <span class="stage-step">step 6</span>
+      <h3 class="stage-name">package</h3>
+      <p class="stage-desc">Wraps the MP3 with ID3 tags + chapter markers derived from segment offsets.</p>
+      <div class="stage-contract">→ Episode</div>
+    </div>
+
+    <div class="stage" data-kind="output">
+      <span class="stage-step">step 7</span>
+      <h3 class="stage-name">distribute</h3>
+      <p class="stage-desc">Writes the episode + updates the RSS feed (or your custom distributor).</p>
+      <div class="stage-contract">→ Feed</div>
+    </div>
+  </div>
+
+  <div class="panels">
+    <div class="panel">
+      <h3>Cross-cutting concerns</h3>
+      <ul>
+        <li><code>Logger</code> — human-readable progress (default no-op).</li>
+        <li><code>onProgress</code> — structured events per stage for progress bars / telemetry.</li>
+        <li><code>AbortSignal</code> — cancel any long-running stage mid-flight.</li>
+        <li><code>LectoriaAuth</code> — credential / apiKey / default. Threaded through both Azure clients.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Pluggable surfaces</h3>
+      <ul>
+        <li><code>ScriptModel</code> — swap Azure OpenAI for OpenAI direct, Anthropic, or a stub for tests.</li>
+        <li><code>TtsProvider</code> — swap Azure Speech for any TTS provider that emits MP3.</li>
+        <li><code>Packager</code> — replace the default ID3 packager for OGG, WAV, or chaptered M4A.</li>
+        <li><code>Distributor</code> — write to S3, upload to Azure Blob, post to a webhook.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    See <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a> for the full stage reference and <a href="../README.md">README</a> for usage examples.
+  </div>
+</div>
+</body>
+</html>

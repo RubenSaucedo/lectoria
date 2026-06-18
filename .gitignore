@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Pipeline output (audio + RSS + state)
+out/*
+!out/.gitkeep
+
+# Sample source docs (don't commit copyrighted material)
+samples/*
+!samples/.gitkeep
+!samples/README.md
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# MCP / tooling artifacts
+.playwright-mcp/
+.copilot/
+
+# Test artifacts
+coverage/
+.vitest-cache/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*

@@ -194,7 +194,7 @@ function ssmlForSegment(
   const runs: Array<{ voiceId: string; body: string }> = [];
   for (const u of segment.utterances) {
     const voiceId = voiceFor(u.voice);
-    const safeText = escapeXml(u.text);
+    const safeText = renderUtteranceText(u.text, language);
     const pause = u.pauseAfterMs ? `<break time="${u.pauseAfterMs}ms"/>` : '';
     const fragment = `${safeText} ${pause}`;
     const last = runs[runs.length - 1];
@@ -223,6 +223,48 @@ function escapeXml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+/**
+ * Lectoria marker that tells the synthesis stage to switch the neural voice
+ * into English phonetics for a span of text. Scripts produced by our LLM
+ * prompts wrap English acronyms / proper nouns / code identifiers in this
+ * marker whenever the surrounding narration is in another language. See
+ * `preservationRules()` in src/script/prompts.ts.
+ *
+ * The marker is intentionally not XML so it survives JSON round-tripping
+ * through OpenAI structured output without escaping surprises.
+ */
+const ENGLISH_SPAN_MARKER = /\[\[en\]\]([\s\S]*?)\[\[\/en\]\]/g;
+
+/**
+ * Convert an utterance's plain text into SSML-safe inline content.
+ *
+ * - XML-escapes everything (so `<`, `&`, quotes are safe to embed).
+ * - Converts `[[en]]X[[/en]]` markers into `<lang xml:lang="en-US">X</lang>`
+ *   so Azure Neural TTS pronounces the wrapped span with English phonetics
+ *   — even when the surrounding voice is set to es-ES, fr-FR, etc.
+ * - When the script's own language is already English, the marker is
+ *   stripped and the inner text is emitted as-is (no need to switch).
+ *
+ * Exported for unit testing.
+ */
+export function renderUtteranceText(text: string, scriptLanguage: string): string {
+  const isEnglish = scriptLanguage.toLowerCase().startsWith('en');
+
+  const parts: string[] = [];
+  let cursor = 0;
+  // Reset lastIndex because the regex is /g and lives at module scope.
+  ENGLISH_SPAN_MARKER.lastIndex = 0;
+  for (let match = ENGLISH_SPAN_MARKER.exec(text); match !== null; match = ENGLISH_SPAN_MARKER.exec(text)) {
+    const [whole, inner] = match;
+    parts.push(escapeXml(text.slice(cursor, match.index)));
+    const safeInner = escapeXml(inner ?? '');
+    parts.push(isEnglish ? safeInner : `<lang xml:lang="en-US">${safeInner}</lang>`);
+    cursor = match.index + whole.length;
+  }
+  parts.push(escapeXml(text.slice(cursor)));
+  return parts.join('');
 }
 
 function synthesizeSsml(

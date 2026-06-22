@@ -1,4 +1,4 @@
-import type { LanguageCode, PodcastScript, ProgressListener, ScriptModel } from '../types.js';
+import type { Glossary, LanguageCode, PodcastScript, ProgressListener, ScriptModel } from '../types.js';
 
 /**
  * Thin wrapper around a ScriptModel that turns a single source-language script
@@ -12,7 +12,7 @@ export async function translateToAll(
   model: ScriptModel,
   source: PodcastScript,
   targetLanguages: LanguageCode[],
-  opts: { signal?: AbortSignal; onProgress?: ProgressListener } = {}
+  opts: { signal?: AbortSignal; onProgress?: ProgressListener; glossary?: Glossary } = {}
 ): Promise<PodcastScript[]> {
   const out: PodcastScript[] = [];
   for (const lang of targetLanguages) {
@@ -28,7 +28,10 @@ export async function translateToAll(
       segments: source.segments.length,
       chunked: source.segments.length > 1,
     });
-    const translated = await model.translateScript(source, lang, { signal: opts.signal });
+    const translated = await model.translateScript(source, lang, {
+      signal: opts.signal,
+      glossary: opts.glossary,
+    });
     opts.onProgress?.({
       phase: 'translate:complete',
       scriptId: translated.id,

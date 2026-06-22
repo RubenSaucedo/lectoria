@@ -141,6 +141,7 @@ catalog. Required for v0:
 | `AZURE_OPENAI_DEPLOYMENT`  | Deployed model name (e.g. `gpt-4o`)                           |
 | `LECTORIA_VOICE_EN`        | Azure neural voice id for English                             |
 | `LECTORIA_VOICE_ES`        | Azure neural voice id for Spanish                             |
+| `LECTORIA_GLOSSARY_FILE`   | (optional) Path to a JSON glossary. See [Glossaries](#glossaries-english-pronunciation-across-translations). |
 
 ### Auth: Microsoft Entra ID (no API keys)
 
@@ -186,6 +187,12 @@ lectoria run <source>          Run the full pipeline on a file or folder.
                                (default: conversational).
   --speakers <list>            Dialogue cast as id:Name pairs (only with
                                --style dialogue). Default: host:Ava,guest:Jorge.
+  --glossary <path>            Path to a JSON glossary file. Terms listed
+                               there keep English pronunciation in non-English
+                               narrations (e.g. "MCP" stays "em-see-pee" inside
+                               a Spanish episode instead of "eme-ce-pe"). See
+                               "Glossaries" below. Overrides
+                               LECTORIA_GLOSSARY_FILE.
   --no-recursive               When the source is a folder, scan only its
                                top level instead of walking subdirectories.
   --no-distribute              Skip RSS feed + episodes.json generation.
@@ -309,6 +316,81 @@ Example:
 
 ```bash
 npx tsx src/cli.ts run samples/spec.md --lang en,es --style verbatim --out ./out
+```
+
+## Glossaries: English pronunciation across translations
+
+Lectoria translates scripts into the target language, but every project has
+proper nouns, brand names, and acronyms that should keep their original
+pronunciation — `MCP`, `CCA`, `HubSpot`, `ADO 5417982`, `Channel Agent`.
+Without help, a Spanish narrator will read `MCP` as "eme-ce-pe" instead of
+"em-see-pee", which sounds wrong and breaks comprehension for bilingual
+listeners.
+
+A **glossary** is a per-project list of terms that should always be
+pronounced in English (Latin letter names) even when the surrounding
+narration is in another language. Lectoria enforces it in two layers:
+
+1. The script-generation prompt enumerates the glossary so the LLM wraps
+   every occurrence in a `[[en]]…[[/en]]` marker.
+2. A deterministic post-processor scans the finished script and wraps any
+   occurrence the model missed — so terms that slip past the LLM still get
+   the right pronunciation. This is the safety net.
+
+The synthesis stage rewrites the marker into SSML
+`<lang xml:lang="en-US">…</lang>` so Azure Neural TTS pronounces the
+wrapped span with English phonetics inside the non-English voice. In English
+scripts the marker is stripped — no impact.
+
+### Glossary file format
+
+```json
+{
+  "terms": [
+    "MCP",
+    "CCA",
+    "HubSpot",
+    "Asana",
+    "ADO 5417982",
+    { "term": "DA", "meaning": "Domain Admin" },
+    { "term": "asana", "caseSensitive": false }
+  ]
+}
+```
+
+Each entry is either a bare string or an object. Bare ALL-CAPS terms
+(`"MCP"`) are matched case-sensitively so the wrap never fires inside
+identifiers like `compositeMcpClient`. Mixed-case terms (`"HubSpot"`) are
+matched case-insensitively by default. Override either with the explicit
+`caseSensitive` field. The optional `meaning` field is sent to the script
+model as a hint so it doesn't expand the acronym.
+
+### How to apply a glossary
+
+```bash
+# CLI flag (highest precedence)
+npx tsx src/cli.ts run samples/spec.md --lang en,es --glossary ./glossary.json
+
+# Or via env var, picked up automatically
+LECTORIA_GLOSSARY_FILE=./glossary.json npx tsx src/cli.ts run samples/spec.md --lang en,es
+```
+
+```ts
+// Library form
+import { runPipeline, defineConfig } from 'lectoria';
+
+const config = defineConfig({
+  glossary: { terms: ['MCP', 'HubSpot', { term: 'DA', meaning: 'Domain Admin' }] },
+  // …azure, voices, etc.
+});
+
+await runPipeline(config, { source: './spec.md' });
+
+// Or pass it per-run, overriding any glossary on config:
+await runPipeline(config, {
+  source: './spec.md',
+  glossary: { terms: ['Channel Agent', 'ADO 5417982'] },
+});
 ```
 
 ## Using lectoria as a library

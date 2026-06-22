@@ -1,4 +1,19 @@
 import { z } from 'zod';
+import { readFileSync } from 'node:fs';
+import type { Glossary } from './types.js';
+
+const GlossaryEntrySchema = z.union([
+  z.string(),
+  z.object({
+    term: z.string().min(1),
+    meaning: z.string().optional(),
+    caseSensitive: z.boolean().optional(),
+  }),
+]);
+
+const GlossarySchema = z.object({
+  terms: z.array(GlossaryEntrySchema),
+});
 
 const ConfigSchema = z.object({
   azure: z.object({
@@ -27,6 +42,12 @@ const ConfigSchema = z.object({
     siteUrl: z.string().url(),
     imageUrl: z.string().url(),
   }),
+  /**
+   * Optional project glossary of terms that must keep English pronunciation
+   * across translations. CLI loads it from `LECTORIA_GLOSSARY_FILE` or the
+   * `--glossary` flag; library callers can pass it through `defineConfig`.
+   */
+  glossary: GlossarySchema.optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -86,9 +107,28 @@ export function loadConfig(opts: { requireResources?: boolean } = {}): Config {
       siteUrl: process.env.LECTORIA_FEED_SITE_URL ?? 'https://example.com',
       imageUrl: process.env.LECTORIA_FEED_IMAGE_URL ?? 'https://example.com/cover.jpg',
     },
+    glossary: loadGlossaryFromEnv(),
   };
 
   return ConfigSchema.parse(raw);
+}
+
+/**
+ * Reads `LECTORIA_GLOSSARY_FILE` (when set) and returns its parsed JSON.
+ * Validation happens later via `ConfigSchema.parse`. Returns undefined when
+ * the env var isn't set so the field stays optional.
+ */
+function loadGlossaryFromEnv(): unknown {
+  const path = process.env.LECTORIA_GLOSSARY_FILE;
+  if (!path) return undefined;
+  try {
+    const raw = readFileSync(path, 'utf-8');
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Failed to read LECTORIA_GLOSSARY_FILE="${path}": ${(err as Error).message}`
+    );
+  }
 }
 
 /**
@@ -134,5 +174,6 @@ function mergeWithDefaults(input: DeepPartial<Config>): Config {
       siteUrl: input.feed?.siteUrl ?? 'https://example.com',
       imageUrl: input.feed?.imageUrl ?? 'https://example.com/cover.jpg',
     },
+    glossary: input.glossary as Glossary | undefined,
   };
 }

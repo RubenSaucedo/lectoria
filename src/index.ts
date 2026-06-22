@@ -29,6 +29,17 @@ export { ingest, LocalFileSystemIngest } from './ingest/index.js';
 export { parse, PdfParser, DocxParser, MarkdownParser, HtmlParser } from './parse/index.js';
 export { translateToAll } from './translate/index.js';
 
+// Glossary helpers — apply project-specific terms outside the pipeline
+// (e.g. wrap an externally-authored script before handing it to a custom
+// TTS adapter).
+export {
+  applyGlossaryToScript,
+  applyGlossaryMarkers,
+  normalizeGlossary,
+  renderGlossaryForPrompt,
+} from './script/glossary.js';
+export type { NormalizedGlossaryTerm } from './script/glossary.js';
+
 // Lightweight TTS factory — use this when you already have the text you
 // want spoken and don't need the full doc-to-podcast pipeline.
 export { createTTS } from './factory.js';

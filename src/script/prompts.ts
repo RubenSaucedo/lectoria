@@ -1,4 +1,5 @@
-import type { Document, LanguageCode, DialogueSpeaker, ScriptStyle } from '../types.js';
+import type { Document, Glossary, LanguageCode, DialogueSpeaker, ScriptStyle } from '../types.js';
+import { renderGlossaryForPrompt } from './glossary.js';
 
 /**
  * System and user prompt templates for the scripting stage.
@@ -7,6 +8,54 @@ import type { Document, LanguageCode, DialogueSpeaker, ScriptStyle } from '../ty
  * directly into a PodcastScript without a free-form extraction step.
  */
 
+/**
+ * Shared guidance about preserving proper nouns, code identifiers, and
+ * (most importantly) English acronyms / initialisms when the target
+ * language is not English. Without this, models tend to expand or
+ * translate acronyms like MCP, CCA, ADO — and TTS engines pronounce
+ * the surviving letters with the target language's letter names
+ * ("eme-ce-pe" instead of "em-see-pee").
+ *
+ * The `[[en]]…[[/en]]` marker is a Lectoria-private convention that the
+ * synthesis stage rewrites into `<lang xml:lang="en-US">…</lang>` SSML so
+ * Azure Neural TTS pronounces the wrapped span in English, even inside a
+ * Spanish (or any other non-English) narration.
+ */
+export function preservationRules(): string {
+  return [
+    'Preserving English terms when narrating in another language:',
+    '- Keep proper nouns, product names, company names, file paths, URLs,',
+    '  code identifiers, and numeric ids in their original Latin-letter form.',
+    '  Examples: HubSpot, Asana, GitHub, Azure, ADO 5417982, src/index.ts.',
+    '- Keep English acronyms, initialisms, and abbreviations in their',
+    '  original uppercase Latin-letter form. Do NOT translate them, do NOT',
+    '  expand them, do NOT transliterate them, do NOT localize them.',
+    '  Examples that must survive verbatim: MCP, CCA, DA, ADO, API, SDK,',
+    '  HTML, CSS, KPI, CEO, AI, ML, LLM, JSON, YAML, URL, UI, UX, PR, QA.',
+    '- When the target language is NOT English, wrap each such span in the',
+    '  literal Lectoria marker [[en]]…[[/en]] so the audio narrator',
+    '  pronounces it with English phonetics. Wrap only the term itself, not',
+    '  surrounding articles, prepositions, or descriptions. Examples:',
+    '    Spanish: "Hoy vamos a hablar de [[en]]MCP[[/en]] y de cómo se',
+    '             integra con [[en]]HubSpot[[/en]]."',
+    '    Spanish: "El bug [[en]]ADO 5417982[[/en]] sigue abierto."',
+    '    Spanish: "La [[en]]API[[/en]] de [[en]]GitHub[[/en]] devuelve',
+    '             [[en]]JSON[[/en]]."',
+    '- When the target language IS English, do NOT emit the [[en]] marker',
+    '  at all — just write the term normally.',
+    '- Do not nest markers. Do not wrap whole sentences. Do not wrap',
+    '  numbers that are already pronounced the same in both languages',
+    '  unless they are part of a code/id (e.g. "ADO 5417982" wraps the',
+    '  whole token; the year "2026" does not need wrapping).',
+    '- Never use any other XML, SSML, or markup inside utterance text.',
+    '  The [[en]]…[[/en]] marker is the only inline tag Lectoria accepts.',
+    '- The user message may include a "Project-specific glossary" section',
+    '  listing terms that must always be wrapped. Treat that list as',
+    '  authoritative — every occurrence of those terms must be wrapped in',
+    '  non-English narration, in addition to the general rules above.',
+  ].join('\n');
+}
+
 export function scriptSystemPrompt(): string {
   return [
     'You are a senior podcast producer who turns written learning material into',
@@ -14,6 +63,8 @@ export function scriptSystemPrompt(): string {
     'natively (not translated). You preserve technical accuracy while making the',
     'material easy to follow by ear: short sentences, signposting, brief recaps,',
     'and an inviting tone. You write a single solo-host narration unless told otherwise.',
+    '',
+    preservationRules(),
     '',
     'Return STRICT JSON only. No prose, no markdown. The JSON shape is:',
     '{',
@@ -32,11 +83,12 @@ export function scriptSystemPrompt(): string {
 
 export function scriptUserPrompt(
   doc: Document,
-  opts: { targetLanguage: LanguageCode; style: ScriptStyle }
+  opts: { targetLanguage: LanguageCode; style: ScriptStyle; glossary?: Glossary }
 ): string {
   const flattened = doc.sections
     .map((s) => (s.heading ? `## ${s.heading}\n\n${s.paragraphs.join('\n\n')}` : s.paragraphs.join('\n\n')))
     .join('\n\n');
+  const glossarySection = renderGlossaryForPrompt(opts.glossary);
 
   return [
     `Target language: ${opts.targetLanguage}`,
@@ -48,6 +100,7 @@ export function scriptUserPrompt(
     'Break the body into 3-7 clearly signposted chapters. End with a brief recap and a friendly sign-off.',
     'Keep each utterance under ~60 words so TTS pacing stays natural.',
     'Insert "pauseAfterMs": 400 between major thoughts where a breath would help.',
+    ...(glossarySection ? ['', glossarySection] : []),
     '',
     '---',
     flattened,
@@ -62,6 +115,8 @@ export function translateSystemPrompt(): string {
     'in that language (not literally translated). Preserve the segment',
     'structure, voice tags, and pauseAfterMs values exactly. Keep technical',
     'terms accurate.',
+    '',
+    preservationRules(),
     '',
     'Return STRICT JSON only. No prose, no markdown. The top-level JSON shape is:',
     '{',
@@ -122,11 +177,13 @@ export function conversationalSystemPrompt(): string {
     '  one "body" segment with that heading. No "intro" / "outro" /',
     '  "chapter" segments.',
     '- Read names, numbers, code identifiers, and technical terms',
-    '  accurately. Keep proper nouns, product names, and code',
-    '  identifiers in their original form even when translating.',
+    '  accurately. See the preservation rules below for how to keep',
+    '  English terms intact across languages.',
     '- If the target language differs from the source, render the script',
     '  natively in the target language, not as a literal word-for-word',
     '  translation.',
+    '',
+    preservationRules(),
     '',
     'Narrating non-prose elements:',
     '- Tables: state in one short phrase what the table is showing, then',
@@ -170,11 +227,12 @@ export function conversationalSystemPrompt(): string {
 
 export function conversationalUserPrompt(
   doc: Document,
-  opts: { targetLanguage: LanguageCode }
+  opts: { targetLanguage: LanguageCode; glossary?: Glossary }
 ): string {
   const flattened = doc.sections
     .map((s) => (s.heading ? `## ${s.heading}\n\n${s.paragraphs.join('\n\n')}` : s.paragraphs.join('\n\n')))
     .join('\n\n');
+  const glossarySection = renderGlossaryForPrompt(opts.glossary);
 
   return [
     `Target language: ${opts.targetLanguage}`,
@@ -185,6 +243,7 @@ export function conversationalUserPrompt(
     'utterances where a small breath helps. No podcast welcome, no',
     'sign-off, no host banter — but feel free to add brief spoken',
     'signposts and combine very short paragraphs so the result flows.',
+    ...(glossarySection ? ['', glossarySection] : []),
     '',
     '---',
     flattened,
@@ -230,8 +289,9 @@ export function verbatimSystemPrompt(): string {
     '  more. When in doubt, keep the original wording.',
     '- If the target language differs from the source, translate as closely',
     '  to the source meaning as possible. Prefer faithfulness over fluency.',
-    '  Keep proper nouns, product names, and code identifiers in their',
-    '  original form.',
+    '  See the preservation rules below for how to keep English terms intact.',
+    '',
+    preservationRules(),
     '',
     'Narrating non-prose elements (this is where you stop being a screen',
     'reader and start being a calm narrator):',
@@ -280,11 +340,12 @@ export function verbatimSystemPrompt(): string {
 
 export function verbatimUserPrompt(
   doc: Document,
-  opts: { targetLanguage: LanguageCode }
+  opts: { targetLanguage: LanguageCode; glossary?: Glossary }
 ): string {
   const flattened = doc.sections
     .map((s) => (s.heading ? `## ${s.heading}\n\n${s.paragraphs.join('\n\n')}` : s.paragraphs.join('\n\n')))
     .join('\n\n');
+  const glossarySection = renderGlossaryForPrompt(opts.glossary);
 
   return [
     `Target language: ${opts.targetLanguage}`,
@@ -294,6 +355,7 @@ export function verbatimUserPrompt(
     'utterance per source paragraph. Use "pauseAfterMs": 300 between',
     'paragraphs so the listener gets a small breath. Do not add anything',
     'that is not in the source.',
+    ...(glossarySection ? ['', glossarySection] : []),
     '',
     '---',
     flattened,
@@ -321,8 +383,11 @@ export function verbatimTranslateSystemPrompt(): string {
     '- Preserve every "voice" field exactly. Speaker dispatch must not change.',
     '- Do not add an intro, outro, recap, or any commentary.',
     '- Do not paraphrase or summarize. Prefer faithfulness over fluency.',
-    '- Keep proper nouns, product names, code identifiers, and numeric',
-    '  values in their original form. Translate only natural-language prose.',
+    '- Keep numeric values in their original form. Translate only',
+    '  natural-language prose. See the preservation rules below for how to',
+    '  keep English proper nouns, code identifiers, and acronyms intact.',
+    '',
+    preservationRules(),
     '',
     'Return STRICT JSON only. No prose, no markdown. The top-level JSON shape is:',
     '{',
@@ -383,10 +448,12 @@ export function dialogueSystemPrompt(speakers: DialogueSpeaker[]): string {
     '- Preserve the document\'s structure: each source heading becomes one',
     '  "body" segment with that heading. No "intro"/"outro"/"chapter" segments.',
     '- Read names, numbers, code identifiers, and technical terms accurately.',
-    '  Keep proper nouns, product names, and code identifiers in their',
-    '  original form even when the target language differs.',
+    '  See the preservation rules below for how to keep English terms intact',
+    '  across languages.',
     '- If the target language differs from the source, write the conversation',
     '  natively in the target language, not as a literal translation.',
+    '',
+    preservationRules(),
     '',
     'Conversation shape per segment:',
     '- Open the segment with one speaker briefly framing what this section is',
@@ -413,12 +480,13 @@ export function dialogueSystemPrompt(speakers: DialogueSpeaker[]): string {
 
 export function dialogueUserPrompt(
   doc: Document,
-  opts: { targetLanguage: LanguageCode; speakers: DialogueSpeaker[] }
+  opts: { targetLanguage: LanguageCode; speakers: DialogueSpeaker[]; glossary?: Glossary }
 ): string {
   const flattened = doc.sections
     .map((s) => (s.heading ? `## ${s.heading}\n\n${s.paragraphs.join('\n\n')}` : s.paragraphs.join('\n\n')))
     .join('\n\n');
   const namesLine = opts.speakers.map((s) => s.name ?? s.id).join(' and ');
+  const glossarySection = renderGlossaryForPrompt(opts.glossary);
 
   return [
     `Target language: ${opts.targetLanguage}`,
@@ -429,6 +497,7 @@ export function dialogueUserPrompt(
     `${namesLine} that teaches the document below by ear. One segment per`,
     'source section. Alternate speakers across utterances. No invented facts',
     'or examples — discuss only what is in the source.',
+    ...(glossarySection ? ['', glossarySection] : []),
     '',
     '---',
     flattened,

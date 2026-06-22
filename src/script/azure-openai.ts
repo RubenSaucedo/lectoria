@@ -8,6 +8,7 @@ import {
 import { noopLogger, type Logger } from '../logger.js';
 import type {
   Document,
+  Glossary,
   LanguageCode,
   PodcastScript,
   PodcastSegment,
@@ -27,6 +28,8 @@ import {
   verbatimTranslateSystemPrompt,
   verbatimUserPrompt,
 } from './prompts.js';
+import { applyGlossaryToScript } from './glossary.js';
+import { renderGlossaryForPrompt } from './glossary.js';
 
 export interface AzureOpenAIScriptModelOptions {
   endpoint: string;
@@ -66,7 +69,7 @@ export class AzureOpenAIScriptModel implements ScriptModel {
 
   async generateScript(
     doc: Document,
-    opts: { targetLanguage: LanguageCode; style: ScriptStyle; signal?: AbortSignal }
+    opts: { targetLanguage: LanguageCode; style: ScriptStyle; glossary?: Glossary; signal?: AbortSignal }
   ): Promise<PodcastScript> {
     // Podcast style produces a single host show (welcome / chapters / outro)
     // that doesn't decompose section-by-section, so it stays a single call.
@@ -74,29 +77,33 @@ export class AzureOpenAIScriptModel implements ScriptModel {
     // section" — chunking them keeps each request small enough to fit inside
     // the Azure deployment's TPM (tokens-per-minute) cap, which is what
     // causes 429 on long documents that no amount of waiting can fix.
-    if (opts.style.kind === 'podcast' || doc.sections.length <= 1) {
-      return this.#generateScriptInOneCall(doc, opts);
-    }
-    return this.#generateScriptBySection(doc, opts);
+    const raw =
+      opts.style.kind === 'podcast' || doc.sections.length <= 1
+        ? await this.#generateScriptInOneCall(doc, opts)
+        : await this.#generateScriptBySection(doc, opts);
+    // Safety net: wrap any glossary term the model missed. No-op for English
+    // scripts and when no glossary is supplied.
+    return applyGlossaryToScript(raw, opts.glossary);
   }
 
   async translateScript(
     script: PodcastScript,
     targetLanguage: LanguageCode,
-    opts: { signal?: AbortSignal } = {}
+    opts: { glossary?: Glossary; signal?: AbortSignal } = {}
   ): Promise<PodcastScript> {
     if (script.language === targetLanguage) return script;
     // Same reasoning as generateScript: translate one segment per call so
     // long scripts don't blow past the deployment's TPM cap.
-    if (script.segments.length <= 1) {
-      return this.#translateScriptInOneCall(script, targetLanguage, opts);
-    }
-    return this.#translateScriptBySegment(script, targetLanguage, opts);
+    const raw =
+      script.segments.length <= 1
+        ? await this.#translateScriptInOneCall(script, targetLanguage, opts)
+        : await this.#translateScriptBySegment(script, targetLanguage, opts);
+    return applyGlossaryToScript(raw, opts.glossary);
   }
 
   async #generateScriptInOneCall(
     doc: Document,
-    opts: { targetLanguage: LanguageCode; style: ScriptStyle; signal?: AbortSignal }
+    opts: { targetLanguage: LanguageCode; style: ScriptStyle; glossary?: Glossary; signal?: AbortSignal }
   ): Promise<PodcastScript> {
     const { systemPrompt, userPrompt, temperature } = selectScriptPrompt(doc, opts);
 
@@ -129,7 +136,7 @@ export class AzureOpenAIScriptModel implements ScriptModel {
 
   async #generateScriptBySection(
     doc: Document,
-    opts: { targetLanguage: LanguageCode; style: ScriptStyle; signal?: AbortSignal }
+    opts: { targetLanguage: LanguageCode; style: ScriptStyle; glossary?: Glossary; signal?: AbortSignal }
   ): Promise<PodcastScript> {
     const total = doc.sections.length;
     this.#logger.info(
@@ -182,10 +189,24 @@ export class AzureOpenAIScriptModel implements ScriptModel {
   async #translateScriptInOneCall(
     script: PodcastScript,
     targetLanguage: LanguageCode,
-    opts: { signal?: AbortSignal }
+    opts: { glossary?: Glossary; signal?: AbortSignal }
   ): Promise<PodcastScript> {
     const verbatim = script.style?.kind === 'verbatim';
     const systemPrompt = verbatim ? verbatimTranslateSystemPrompt() : translateSystemPrompt();
+    const glossaryBlock = renderGlossaryForPrompt(opts.glossary);
+
+    const payload = JSON.stringify({
+      targetLanguage,
+      sourceLanguage: script.language,
+      script: {
+        episodeTitle: script.episodeTitle,
+        summary: script.summary,
+        segments: script.segments,
+      },
+    });
+    const userContent = glossaryBlock
+      ? `${glossaryBlock}\n\nInput script JSON follows. Return the translated script as STRICT JSON.\n\n${payload}`
+      : payload;
 
     const response = await this.#client.chat.completions.create(
       {
@@ -193,18 +214,7 @@ export class AzureOpenAIScriptModel implements ScriptModel {
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              targetLanguage,
-              sourceLanguage: script.language,
-              script: {
-                episodeTitle: script.episodeTitle,
-                summary: script.summary,
-                segments: script.segments,
-              },
-            }),
-          },
+          { role: 'user', content: userContent },
         ],
         temperature: verbatim ? 0.2 : 0.3,
       },
@@ -228,7 +238,7 @@ export class AzureOpenAIScriptModel implements ScriptModel {
   async #translateScriptBySegment(
     script: PodcastScript,
     targetLanguage: LanguageCode,
-    opts: { signal?: AbortSignal }
+    opts: { glossary?: Glossary; signal?: AbortSignal }
   ): Promise<PodcastScript> {
     const total = script.segments.length;
     this.#logger.info(
@@ -310,33 +320,35 @@ interface PromptSelection {
 
 function selectScriptPrompt(
   doc: Document,
-  opts: { targetLanguage: LanguageCode; style: ScriptStyle }
+  opts: { targetLanguage: LanguageCode; style: ScriptStyle; glossary?: Glossary }
 ): PromptSelection {
+  const { targetLanguage, glossary } = opts;
   switch (opts.style.kind) {
     case 'verbatim':
       return {
         systemPrompt: verbatimSystemPrompt(),
-        userPrompt: verbatimUserPrompt(doc, { targetLanguage: opts.targetLanguage }),
+        userPrompt: verbatimUserPrompt(doc, { targetLanguage, glossary }),
         temperature: 0.2,
       };
     case 'conversational':
       return {
         systemPrompt: conversationalSystemPrompt(),
-        userPrompt: conversationalUserPrompt(doc, { targetLanguage: opts.targetLanguage }),
+        userPrompt: conversationalUserPrompt(doc, { targetLanguage, glossary }),
         temperature: 0.4,
       };
     case 'podcast':
       return {
         systemPrompt: scriptSystemPrompt(),
-        userPrompt: scriptUserPrompt(doc, opts),
+        userPrompt: scriptUserPrompt(doc, { targetLanguage, style: opts.style, glossary }),
         temperature: 0.7,
       };
     case 'dialogue':
       return {
         systemPrompt: dialogueSystemPrompt(opts.style.speakers),
         userPrompt: dialogueUserPrompt(doc, {
-          targetLanguage: opts.targetLanguage,
+          targetLanguage,
           speakers: opts.style.speakers,
+          glossary,
         }),
         // Lower than podcast (0.7) because dialogue must stay grounded in
         // the source, higher than conversational (0.4) because the

@@ -5,6 +5,7 @@ import type {
   Distributor,
   Document,
   Episode,
+  Glossary,
   LanguageCode,
   Packager,
   PodcastScript,
@@ -48,6 +49,18 @@ export interface RunOptions {
    * useful for callers that handle distribution themselves.
    */
   distribute?: boolean;
+  /**
+   * Project-specific terms (brand names, acronyms, code identifiers) that
+   * should keep their original-language pronunciation across translations.
+   * Threaded into the script and translate stages so the model wraps them
+   * in `[[en]]…[[/en]]` markers, with a deterministic post-pass wrapping
+   * any occurrences the model misses. The synthesis stage rewrites the
+   * markers into SSML `<lang xml:lang="en-US">` so Azure Neural TTS reads
+   * them with English phonetics inside non-English narrations.
+   *
+   * Overrides any glossary set on `Config.glossary`.
+   */
+  glossary?: Glossary;
 }
 
 /**
@@ -92,6 +105,7 @@ export async function runPipeline(
   const signal = opts.signal;
   const recursive = opts.recursive ?? true;
   const distributeEnabled = opts.distribute ?? true;
+  const glossary = opts.glossary ?? config.glossary;
   const outDir = resolve(config.outDir);
   await mkdir(outDir, { recursive: true });
 
@@ -139,6 +153,7 @@ export async function runPipeline(
     const baseScript: PodcastScript = await scriptModel.generateScript(doc, {
       targetLanguage: primaryLanguage,
       style,
+      glossary,
       signal,
     });
     onProgress?.({
@@ -150,6 +165,7 @@ export async function runPipeline(
     const localizedScripts = await translateToAll(scriptModel, baseScript, targetLanguages, {
       signal,
       onProgress,
+      glossary,
     });
 
     const episodeDir = resolveEpisodeDir(outDir, inputRootName, doc.sourcePath);

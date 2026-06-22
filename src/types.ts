@@ -181,13 +181,60 @@ export type ScriptStyle =
 export interface ScriptModel {
   generateScript(
     doc: Document,
-    opts: { targetLanguage: LanguageCode; style: ScriptStyle; signal?: AbortSignal }
+    opts: { targetLanguage: LanguageCode; style: ScriptStyle; glossary?: Glossary; signal?: AbortSignal }
   ): Promise<PodcastScript>;
   translateScript(
     script: PodcastScript,
     targetLanguage: LanguageCode,
-    opts?: { signal?: AbortSignal }
+    opts?: { glossary?: Glossary; signal?: AbortSignal }
   ): Promise<PodcastScript>;
+}
+
+/**
+ * A single glossary entry. Most often a bare string (the term itself), but
+ * accepts an object form when you want to give the script model a hint
+ * about what the term means (so it doesn't expand or translate it) or
+ * override the default case-sensitivity heuristic.
+ *
+ * Examples:
+ *   "MCP"
+ *   "HubSpot"
+ *   { term: "DA", meaning: "Domain Admin" }
+ *   { term: "asana", caseSensitive: false }
+ */
+export type GlossaryEntry =
+  | string
+  | {
+      /** Exact written form to keep verbatim, e.g. "MCP", "HubSpot", "ADO 5417982". */
+      term: string;
+      /**
+       * Optional short gloss to help the script model understand the term
+       * without expanding or translating it in the script.
+       */
+      meaning?: string;
+      /**
+       * Whether matching is case-sensitive. Defaults to true for ALL-CAPS
+       * acronyms (so "MCP" wraps only when written "MCP", not "mcp"), and
+       * false otherwise.
+       */
+      caseSensitive?: boolean;
+    };
+
+/**
+ * Project-specific list of terms that should keep their original-language
+ * pronunciation across all target languages.
+ *
+ * The script-generation prompt enumerates these explicitly so the LLM
+ * wraps them in the `[[en]]…[[/en]]` marker, and a deterministic
+ * post-processor wraps any unmarked occurrences after the model returns —
+ * so terms that slip past the model still get the right pronunciation.
+ *
+ * The synthesis stage then rewrites those markers into SSML
+ * `<lang xml:lang="en-US">…</lang>` so Azure Neural TTS reads them with
+ * English phonetics, even mid-Spanish-narration.
+ */
+export interface Glossary {
+  terms: GlossaryEntry[];
 }
 
 export interface VoiceMap {

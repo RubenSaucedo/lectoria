@@ -9,7 +9,7 @@ import { ingest } from './ingest/index.js';
 import { parse } from './parse/index.js';
 import { createStreamLogger } from './logger.js';
 import { parseStyle } from './cli-helpers.js';
-import type { LanguageCode } from './types.js';
+import type { Glossary, LanguageCode } from './types.js';
 
 const program = new Command();
 
@@ -43,6 +43,12 @@ program
     '--no-distribute',
     'Skip RSS feed + episodes.json generation. Produce audio files only.'
   )
+  .option(
+    '--glossary <path>',
+    'Path to a JSON glossary file: { "terms": ["MCP", { "term": "DA", "meaning": "Domain Admin" }] }. ' +
+      'Listed terms keep English pronunciation in non-English narrations. ' +
+      'Overrides LECTORIA_GLOSSARY_FILE.'
+  )
   .action(
     async (
       source: string,
@@ -53,6 +59,7 @@ program
         speakers?: string;
         recursive?: boolean;
         distribute?: boolean;
+        glossary?: string;
       }
     ) => {
       const config = loadConfig();
@@ -61,6 +68,7 @@ program
         ? (opts.lang.split(',').map((s) => s.trim()).filter(Boolean) as LanguageCode[])
         : undefined;
       const style = parseStyle(opts.style, opts.speakers);
+      const glossary = opts.glossary ? await loadGlossaryFromFile(opts.glossary) : undefined;
 
       const episodes = await runPipeline(config, {
         source,
@@ -68,6 +76,7 @@ program
         style,
         recursive: opts.recursive,
         distribute: opts.distribute,
+        glossary,
         logger: createStreamLogger(process.stderr),
       });
       for (const ep of episodes) {
@@ -153,4 +162,38 @@ async function findEpisodeIndexes(root: string): Promise<string[]> {
       }
     }
   }
+}
+
+/**
+ * Reads a glossary JSON file. Throws a readable error if the file is
+ * unreadable or malformed so the CLI can surface it instead of producing
+ * a confusing schema-validation message at pipeline start.
+ *
+ * Accepted shape (matches the `Glossary` interface):
+ *   { "terms": ["MCP", "HubSpot", { "term": "DA", "meaning": "Domain Admin" }] }
+ */
+async function loadGlossaryFromFile(path: string): Promise<Glossary> {
+  const absolute = resolve(path);
+  let raw: string;
+  try {
+    raw = await readFile(absolute, 'utf-8');
+  } catch (err) {
+    throw new Error(`--glossary "${path}" could not be read: ${(err as Error).message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`--glossary "${path}" is not valid JSON: ${(err as Error).message}`);
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !Array.isArray((parsed as { terms?: unknown }).terms)
+  ) {
+    throw new Error(
+      `--glossary "${path}" must have shape { "terms": [...] }. Found: ${typeof parsed}.`
+    );
+  }
+  return parsed as Glossary;
 }

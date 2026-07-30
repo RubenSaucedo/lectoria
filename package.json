@@ -63,6 +63,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rimraf dist out/*.mp3 out/*.xml",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "engines": {

@@ -12,6 +12,8 @@ import type {
   SynthesizedAudio,
   TtsProvider,
   VoiceMap,
+  VoiceSpec,
+  VoiceValue,
 } from '../types.js';
 
 export interface AzureSpeechTtsOptions {
@@ -142,7 +144,9 @@ export class AzureSpeechTts implements TtsProvider {
 }
 
 /**
- * Resolves the provider voice id for a given logical speaker + language.
+ * Resolves the voice for a given logical speaker + language into a normalized
+ * {@link VoiceSpec} (bare voice-id values become `{ name }`).
+ *
  * Falls back to `host` when `voiceKey` is missing or unmapped — so existing
  * single-voice scripts (every utterance with voice="host" or voice undefined)
  * keep working unchanged.
@@ -150,16 +154,16 @@ export class AzureSpeechTts implements TtsProvider {
  * Throws when even `host` is not configured for `language`, with a message
  * that lists what IS configured so the caller can fix their VoiceMap fast.
  */
-function resolveVoice(language: string, voices: VoiceMap, voiceKey: string | undefined): string {
+function resolveVoice(language: string, voices: VoiceMap, voiceKey: string | undefined): VoiceSpec {
   const key = voiceKey ?? 'host';
   const candidate = voices[key]?.[language];
-  if (candidate) return candidate;
+  if (candidate) return normalizeVoice(candidate);
 
   // Explicit speaker id requested but unmapped — surface what IS available
   // so the caller can either add the mapping or fix the speaker id.
   if (key !== 'host') {
     const fallback = voices.host?.[language];
-    if (fallback) return fallback;
+    if (fallback) return normalizeVoice(fallback);
     const known = Object.keys(voices).join(', ');
     throw new Error(
       `No voice configured for speaker "${key}" in language "${language}", and no "host" fallback either. Configured speaker ids: ${known}.`
@@ -171,15 +175,41 @@ function resolveVoice(language: string, voices: VoiceMap, voiceKey: string | und
   );
 }
 
-function ssmlForSegment(
+/** Normalize a VoiceValue (bare id or spec) into a VoiceSpec. */
+function normalizeVoice(value: VoiceValue): VoiceSpec {
+  return typeof value === 'string' ? { name: value } : value;
+}
+
+/** Stable identity for grouping consecutive utterances that share a voice + delivery. */
+function voiceKeyOf(v: VoiceSpec): string {
+  return `${v.name}|${v.rate ?? ''}|${v.pitch ?? ''}|${v.style ?? ''}|${v.styleDegree ?? ''}`;
+}
+
+/**
+ * Wrap an SSML body fragment for one voice, applying delivery tuning:
+ * `<prosody rate/pitch>` (works on every voice) optionally wrapped in
+ * `<mstts:express-as style>` (only for voices that support the style).
+ */
+function voiceBlock(v: VoiceSpec, body: string): string {
+  const rate = v.rate ?? '0%';
+  const pitchAttr = v.pitch ? ` pitch="${escapeXml(v.pitch)}"` : '';
+  let inner = `<prosody rate="${escapeXml(rate)}"${pitchAttr}>${body}</prosody>`;
+  if (v.style) {
+    const degree = v.styleDegree != null ? ` styledegree="${v.styleDegree}"` : '';
+    inner = `<mstts:express-as style="${escapeXml(v.style)}"${degree}>${inner}</mstts:express-as>`;
+  }
+  return `<voice name="${escapeXml(v.name)}">${inner}</voice>`;
+}
+
+export function ssmlForSegment(
   language: string,
   voices: VoiceMap,
   segment: PodcastSegment
 ): string {
-  // Cache resolved provider voice ids per speaker key inside this segment so
-  // we don't repeat the lookup for every utterance.
-  const voiceCache = new Map<string, string>();
-  const voiceFor = (speakerKey: string | undefined): string => {
+  // Cache resolved voices per speaker key inside this segment so we don't
+  // repeat the lookup for every utterance.
+  const voiceCache = new Map<string, VoiceSpec>();
+  const voiceFor = (speakerKey: string | undefined): VoiceSpec => {
     const key = speakerKey ?? 'host';
     const cached = voiceCache.get(key);
     if (cached) return cached;
@@ -188,29 +218,33 @@ function ssmlForSegment(
     return resolved;
   };
 
-  // Group consecutive utterances by speaker so each voice block synthesises
+  // Group consecutive utterances by voice + delivery so each block synthesises
   // multiple utterances in one shot — cleaner audio than restarting the
   // voice for every line.
-  const runs: Array<{ voiceId: string; body: string }> = [];
+  const runs: Array<{ voice: VoiceSpec; key: string; body: string }> = [];
   for (const u of segment.utterances) {
-    const voiceId = voiceFor(u.voice);
+    const voice = voiceFor(u.voice);
+    const key = voiceKeyOf(voice);
     const safeText = renderUtteranceText(u.text, language);
     const pause = u.pauseAfterMs ? `<break time="${u.pauseAfterMs}ms"/>` : '';
     const fragment = `${safeText} ${pause}`;
     const last = runs[runs.length - 1];
-    if (last && last.voiceId === voiceId) {
+    if (last && last.key === key) {
       last.body += ` ${fragment}`;
     } else {
-      runs.push({ voiceId, body: fragment });
+      runs.push({ voice, key, body: fragment });
     }
   }
 
-  const voiceBlocks = runs
-    .map((r) => `<voice name="${r.voiceId}"><prosody rate="0%">${r.body}</prosody></voice>`)
-    .join('');
+  const voiceBlocks = runs.map((r) => voiceBlock(r.voice, r.body)).join('');
+
+  // Only declare the mstts namespace when a run actually uses express-as, so
+  // style-free scripts keep their previous (namespace-free) SSML envelope.
+  const usesStyle = runs.some((r) => r.voice.style);
+  const mstts = usesStyle ? ' xmlns:mstts="http://www.w3.org/2001/mstts"' : '';
 
   return [
-    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${language}">`,
+    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"${mstts} xml:lang="${language}">`,
     voiceBlocks,
     `</speak>`,
   ].join('');

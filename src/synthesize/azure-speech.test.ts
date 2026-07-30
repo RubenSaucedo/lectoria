@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { renderUtteranceText } from './azure-speech.js';
+import { renderUtteranceText, ssmlForSegment } from './azure-speech.js';
+import type { PodcastSegment, VoiceMap } from '../types.js';
 
 describe('renderUtteranceText', () => {
   it('xml-escapes plain text with no markers', () => {
@@ -56,5 +57,59 @@ describe('renderUtteranceText', () => {
     expect(renderUtteranceText(input, 'es')).toBe(expected);
     expect(renderUtteranceText(input, 'es')).toBe(expected);
     expect(renderUtteranceText(input, 'es')).toBe(expected);
+  });
+});
+
+describe('ssmlForSegment', () => {
+  const seg = (utterances: PodcastSegment['utterances']): PodcastSegment => ({
+    kind: 'body',
+    utterances,
+  });
+
+  it('renders a bare string voice with a neutral prosody and no mstts namespace', () => {
+    const voices: VoiceMap = { host: { es: 'es-ES-AlvaroNeural' } };
+    const out = ssmlForSegment('es', voices, seg([{ voice: 'host', text: 'Hola' }]));
+    expect(out).toContain('xml:lang="es"');
+    expect(out).not.toContain('xmlns:mstts');
+    expect(out).toContain('<voice name="es-ES-AlvaroNeural"><prosody rate="0%">Hola');
+  });
+
+  it('applies rate and pitch from a VoiceSpec', () => {
+    const voices: VoiceMap = { host: { es: { name: 'es-ES-AlvaroNeural', rate: '-6%', pitch: '+2%' } } };
+    const out = ssmlForSegment('es', voices, seg([{ voice: 'host', text: 'Hola' }]));
+    expect(out).toContain('<prosody rate="-6%" pitch="+2%">Hola');
+  });
+
+  it('wraps a styled voice in mstts:express-as and declares the namespace', () => {
+    const voices: VoiceMap = { host: { en: { name: 'en-US-AriaNeural', style: 'cheerful', styleDegree: 1.5 } } };
+    const out = ssmlForSegment('en', voices, seg([{ voice: 'host', text: 'Hi' }]));
+    expect(out).toContain('xmlns:mstts="http://www.w3.org/2001/mstts"');
+    expect(out).toContain('<mstts:express-as style="cheerful" styledegree="1.5"><prosody rate="0%">Hi');
+    expect(out).toContain('</prosody></mstts:express-as></voice>');
+  });
+
+  it('merges consecutive utterances that share a voice into one block, splits on change', () => {
+    const voices: VoiceMap = {
+      host: { es: { name: 'es-ES-AlvaroNeural', rate: '-6%' } },
+      guest: { es: { name: 'es-ES-DarioNeural', rate: '-4%' } },
+    };
+    const out = ssmlForSegment(
+      'es',
+      voices,
+      seg([
+        { voice: 'host', text: 'Uno' },
+        { voice: 'host', text: 'Dos' },
+        { voice: 'guest', text: 'Tres' },
+      ])
+    );
+    expect((out.match(/<voice /g) ?? []).length).toBe(2);
+    expect(out).toContain('es-ES-AlvaroNeural');
+    expect(out).toContain('es-ES-DarioNeural');
+  });
+
+  it('falls back to the host voice for an unmapped speaker id', () => {
+    const voices: VoiceMap = { host: { es: 'es-ES-AlvaroNeural' } };
+    const out = ssmlForSegment('es', voices, seg([{ voice: 'narrator', text: 'Hola' }]));
+    expect(out).toContain('es-ES-AlvaroNeural');
   });
 });

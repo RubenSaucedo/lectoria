@@ -240,10 +240,41 @@ export interface Glossary {
 export interface VoiceMap {
   /**
    * Map logical speaker id ("host", "guest", "narrator") to a provider
-   * voice id per language. Dialogue mode requires an entry for every
+   * voice per language. Dialogue mode requires an entry for every
    * speaker id that appears in the script.
+   *
+   * A voice is either a bare Azure voice id (e.g. "es-ES-AlvaroNeural") or a
+   * {@link VoiceSpec} object when you want to tune delivery (pace, pitch, or
+   * an Azure "express-as" speaking style).
    */
-  [logicalVoice: string]: { [language: string]: string };
+  [logicalVoice: string]: { [language: string]: VoiceValue };
+}
+
+/**
+ * A voice value: either a bare Azure voice id, or a {@link VoiceSpec} that
+ * layers delivery tuning on top of the voice. Bare strings keep single-voice
+ * scripts working unchanged.
+ */
+export type VoiceValue = string | VoiceSpec;
+
+/**
+ * A voice plus optional delivery tuning applied at synthesis time via SSML.
+ * `rate`/`pitch` map to `<prosody>` and work on every neural voice; `style`
+ * maps to `<mstts:express-as>` and only takes effect on voices that support
+ * that style (an unsupported style errors the run), so leave it unset unless
+ * you've confirmed support for the chosen voice.
+ */
+export interface VoiceSpec {
+  /** Azure voice id, e.g. "es-ES-AlvaroNeural". */
+  name: string;
+  /** Prosody speaking rate, e.g. "-6%" (slower/measured) or "+5%". */
+  rate?: string;
+  /** Prosody pitch, e.g. "+2%" or "-1st". */
+  pitch?: string;
+  /** Azure express-as style, e.g. "cheerful". Only for voices that support it. */
+  style?: string;
+  /** Style intensity 0.01–2 (Azure default 1). Only meaningful with `style`. */
+  styleDegree?: number;
 }
 
 export interface TtsProvider {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readFileSync } from 'node:fs';
-import type { Glossary } from './types.js';
+import type { Glossary, VoiceMap, VoiceValue } from './types.js';
+import { resolveVoicePreset } from './voices/presets.js';
 
 const GlossaryEntrySchema = z.union([
   z.string(),
@@ -14,6 +15,16 @@ const GlossaryEntrySchema = z.union([
 const GlossarySchema = z.object({
   terms: z.array(GlossaryEntrySchema),
 });
+
+const VoiceSpecSchema = z.object({
+  name: z.string().min(1),
+  rate: z.string().optional(),
+  pitch: z.string().optional(),
+  style: z.string().optional(),
+  styleDegree: z.number().optional(),
+});
+
+const VoiceValueSchema = z.union([z.string().min(1), VoiceSpecSchema]);
 
 const ConfigSchema = z.object({
   azure: z.object({
@@ -32,7 +43,7 @@ const ConfigSchema = z.object({
       apiVersion: z.string().min(1),
     }),
   }),
-  voices: z.record(z.string(), z.record(z.string(), z.string())),
+  voices: z.record(z.string(), z.record(z.string(), VoiceValueSchema)),
   targetLanguages: z.array(z.string()).min(1),
   outDir: z.string().min(1),
   feed: z.object({
@@ -85,16 +96,7 @@ export function loadConfig(opts: { requireResources?: boolean } = {}): Config {
         apiVersion: process.env.AZURE_OPENAI_API_VERSION ?? '2024-08-01-preview',
       },
     },
-    voices: {
-      host: {
-        en: process.env.LECTORIA_VOICE_EN ?? 'en-US-AvaMultilingualNeural',
-        es: process.env.LECTORIA_VOICE_ES ?? 'es-MX-DaliaNeural',
-      },
-      guest: {
-        en: process.env.LECTORIA_VOICE_EN_GUEST ?? 'en-US-AndrewMultilingualNeural',
-        es: process.env.LECTORIA_VOICE_ES_GUEST ?? 'es-MX-JorgeNeural',
-      },
-    },
+    voices: buildVoices(),
     targetLanguages: (process.env.LECTORIA_TARGET_LANGS ?? 'en,es')
       .split(',')
       .map((s) => s.trim())
@@ -132,6 +134,25 @@ function loadGlossaryFromEnv(): unknown {
 }
 
 /**
+ * Build the VoiceMap for the CLI: start from the selected preset
+ * (`LECTORIA_VOICE_PRESET`, default `emprendedor`), then layer per-role env
+ * overrides on top. An override sets a bare voice id, replacing that slot's
+ * preset delivery tuning — set it only when you want a specific voice.
+ */
+function buildVoices(): VoiceMap {
+  const { voices } = resolveVoicePreset(process.env.LECTORIA_VOICE_PRESET);
+  const override = (role: string, lang: string, value: string | undefined) => {
+    if (!value) return;
+    (voices[role] ??= {})[lang] = value as VoiceValue;
+  };
+  override('host', 'en', process.env.LECTORIA_VOICE_EN);
+  override('host', 'es', process.env.LECTORIA_VOICE_ES);
+  override('guest', 'en', process.env.LECTORIA_VOICE_EN_GUEST);
+  override('guest', 'es', process.env.LECTORIA_VOICE_ES_GUEST);
+  return voices;
+}
+
+/**
  * Programmatic config builder for library consumers.
  *
  * Pass only what you care about; the rest gets reasonable defaults so a
@@ -161,10 +182,7 @@ function mergeWithDefaults(input: DeepPartial<Config>): Config {
         apiVersion: input.azure?.openai?.apiVersion ?? '2024-08-01-preview',
       },
     },
-    voices: (input.voices as Config['voices']) ?? {
-      host: { en: 'en-US-AvaMultilingualNeural', es: 'es-MX-DaliaNeural' },
-      guest: { en: 'en-US-AndrewMultilingualNeural', es: 'es-MX-JorgeNeural' },
-    },
+    voices: (input.voices as Config['voices']) ?? resolveVoicePreset().voices,
     targetLanguages: (input.targetLanguages as string[]) ?? ['en', 'es'],
     outDir: input.outDir ?? './out',
     feed: {

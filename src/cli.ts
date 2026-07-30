@@ -9,6 +9,7 @@ import { ingest } from './ingest/index.js';
 import { parse } from './parse/index.js';
 import { createStreamLogger } from './logger.js';
 import { parseStyle } from './cli-helpers.js';
+import { VOICE_PRESETS, DEFAULT_VOICE_PRESET } from './voices/presets.js';
 import type { Glossary, LanguageCode } from './types.js';
 
 const program = new Command();
@@ -36,6 +37,12 @@ program
       'Only used when --style dialogue. Defaults to host:Ava,guest:Jorge.'
   )
   .option(
+    '--voice <preset>',
+    `Voice preset: ${Object.keys(VOICE_PRESETS).join(' | ')}. ` +
+      `Sets host/guest voices + pace per language. Overrides LECTORIA_VOICE_PRESET. ` +
+      `Default: ${DEFAULT_VOICE_PRESET}. Run \`lectoria voices\` to see them.`
+  )
+  .option(
     '--no-recursive',
     'When the source is a folder, scan only its top level instead of walking subdirectories.'
   )
@@ -57,11 +64,16 @@ program
         out?: string;
         style?: string;
         speakers?: string;
+        voice?: string;
         recursive?: boolean;
         distribute?: boolean;
         glossary?: string;
       }
     ) => {
+      // Feed --voice through the env the config layer reads, so the preset is
+      // resolved (and validated) in one place — loadConfig throws a readable
+      // error for an unknown preset name.
+      if (opts.voice) process.env.LECTORIA_VOICE_PRESET = opts.voice;
       const config = loadConfig();
       if (opts.out) (config as { outDir: string }).outDir = opts.out;
       const targetLanguages = opts.lang
@@ -94,6 +106,29 @@ program
     for (const file of files) {
       const doc = await parse(file);
       console.log(JSON.stringify(doc, null, 2));
+    }
+  });
+
+program
+  .command('voices')
+  .description('List available voice presets (pick one with `run --voice <preset>`).')
+  .action(() => {
+    for (const [name, map] of Object.entries(VOICE_PRESETS)) {
+      const marker = name === DEFAULT_VOICE_PRESET ? ' (default)' : '';
+      console.log(`\n${name}${marker}`);
+      for (const [role, byLang] of Object.entries(map)) {
+        for (const [lang, voice] of Object.entries(byLang)) {
+          const spec = typeof voice === 'string' ? { name: voice } : voice;
+          const tuning = [
+            spec.rate ? `rate ${spec.rate}` : null,
+            spec.pitch ? `pitch ${spec.pitch}` : null,
+            spec.style ? `style ${spec.style}` : null,
+          ]
+            .filter(Boolean)
+            .join(', ');
+          console.log(`  ${role.padEnd(6)} ${lang}  ${spec.name}${tuning ? `  (${tuning})` : ''}`);
+        }
+      }
     }
   });
 

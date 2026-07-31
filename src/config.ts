@@ -135,7 +135,7 @@ function loadGlossaryFromEnv(): unknown {
 
 /**
  * Build the VoiceMap for the CLI: start from the selected preset
- * (`LECTORIA_VOICE_PRESET`, default `emprendedor`), then layer per-role env
+ * (`LECTORIA_VOICE_PRESET`, default `espana`), then layer per-role env
  * overrides on top. An override sets a bare voice id, replacing that slot's
  * preset delivery tuning — set it only when you want a specific voice.
  */

@@ -139,7 +139,7 @@ catalog. Required for v0:
 | `AZURE_SPEECH_RESOURCE_ID` | Full Azure resource ID of the Speech resource (see below)     |
 | `AZURE_OPENAI_ENDPOINT`    | Your Azure OpenAI resource endpoint                           |
 | `AZURE_OPENAI_DEPLOYMENT`  | Deployed model name (e.g. `gpt-4o`)                           |
-| `LECTORIA_VOICE_PRESET`    | (optional) Named voice preset — see [Voices](#voices). Default `emprendedor`. |
+| `LECTORIA_VOICE_PRESET`    | (optional) Named voice preset — see [Voices](#voices). Default `espana`. |
 | `LECTORIA_VOICE_EN`        | (optional) Override the English host voice id                 |
 | `LECTORIA_VOICE_ES`        | (optional) Override the Spanish host voice id                 |
 | `LECTORIA_GLOSSARY_FILE`   | (optional) Path to a JSON glossary. See [Glossaries](#glossaries-english-pronunciation-across-translations). |
@@ -186,9 +186,9 @@ lectoria run <source>          Run the full pipeline on a file or folder.
   --out <dir>                  Output directory (default: ./out).
   --style <style>              podcast | conversational | verbatim | dialogue
                                (default: conversational).
-  --voice <preset>             Voice preset: emprendedor | latino | intermedio.
+  --voice <preset>             Voice preset: espana | latino | intermedio.
                                Sets host/guest voices + pace per language.
-                               Default: emprendedor. Overrides LECTORIA_VOICE_PRESET.
+                               Default: espana. Overrides LECTORIA_VOICE_PRESET.
   --speakers <list>            Dialogue cast as id:Name pairs (only with
                                --style dialogue). Default: host:Ava,guest:Jorge.
   --glossary <path>            Path to a JSON glossary file. Terms listed
@@ -216,12 +216,12 @@ narrator's whole character with one flag. Pick one with `--voice <preset>` (or
 
 | Preset        | Spanish host                     | Feel                                                        |
 | ------------- | -------------------------------- | ----------------------------------------------------------- |
-| `emprendedor` | `es-ES-AlvaroNeural` (rate −6%)  | **Default.** Warm, measured, peninsular-Castilian — clear didactic narration for book summaries / study content. |
-| `latino`      | `es-MX-JorgeNeural` (rate −3%)   | The same measured read in neutral Latin-American Spanish.   |
+| `espana`      | `es-ES-AlvaroNeural` (rate −6%)  | **Default.** Warm, measured, peninsular-Castilian — clear didactic narration for book summaries / study content. |
+| `latino`      | `es-MX-JorgeNeural` (rate +5%)   | The same measured read in neutral Latin-American Spanish.   |
 | `intermedio`  | `es-ES-TristanMultilingualNeural` (rate −4%) | "In between" Castilian and Latin-American — a less regionally-marked, international feel. |
 
 ```bash
-# Use the default (emprendedor):
+# Use the default (espana):
 lectoria run notes.md --lang es
 
 # Pick a variation:

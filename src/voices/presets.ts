@@ -20,7 +20,7 @@ export const VOICE_PRESETS: Record<string, VoiceMap> = {
    * (Álvaro supports only `cheerful`/`sad` styles, neither of which fits a
    * neutral didactic read, so no express-as style is applied.)
    */
-  emprendedor: {
+  espana: {
     host: {
       es: { name: 'es-ES-AlvaroNeural', rate: '-6%' },
       en: { name: 'en-US-AndrewMultilingualNeural', rate: '-4%' },
@@ -33,15 +33,17 @@ export const VOICE_PRESETS: Record<string, VoiceMap> = {
 
   /**
    * Neutral Latin-American variation — the same measured, friendly read in
-   * Mexican Spanish for listeners who prefer a Latin-American accent.
+   * Mexican Spanish for listeners who prefer a Latin-American accent. Jorge's
+   * natural cadence is slower, so it runs a touch faster (+5%/+7%) to feel as
+   * lively as the Castilian presets.
    */
   latino: {
     host: {
-      es: { name: 'es-MX-JorgeNeural', rate: '-3%' },
+      es: { name: 'es-MX-JorgeNeural', rate: '+5%' },
       en: { name: 'en-US-AndrewMultilingualNeural', rate: '-3%' },
     },
     guest: {
-      es: { name: 'es-MX-GerardoNeural' },
+      es: { name: 'es-MX-GerardoNeural', rate: '+7%' },
       en: { name: 'en-US-BrianMultilingualNeural' },
     },
   },
@@ -63,7 +65,7 @@ export const VOICE_PRESETS: Record<string, VoiceMap> = {
 };
 
 /** The preset used when none is requested. */
-export const DEFAULT_VOICE_PRESET = 'emprendedor';
+export const DEFAULT_VOICE_PRESET = 'espana';
 
 /**
  * Resolve a preset name to a fresh (deep-cloned) VoiceMap. Falls back to the

@@ -23,18 +23,18 @@ describe('resolveVoicePreset', () => {
 
   it('throws a readable error listing available presets for an unknown name', () => {
     expect(() => resolveVoicePreset('nope')).toThrowError(/Unknown voice preset "nope"/);
-    expect(() => resolveVoicePreset('nope')).toThrowError(/emprendedor/);
+    expect(() => resolveVoicePreset('nope')).toThrowError(/espana/);
   });
 
   it('returns a deep clone so callers can mutate without corrupting the registry', () => {
-    const a = resolveVoicePreset('emprendedor').voices;
+    const a = resolveVoicePreset('espana').voices;
     (a.host.es as { name: string }).name = 'mutated';
-    const b = resolveVoicePreset('emprendedor').voices;
+    const b = resolveVoicePreset('espana').voices;
     expect((b.host.es as { name: string }).name).toBe('es-ES-AlvaroNeural');
   });
 
-  it('ships the default emprendedor preset as a measured Castilian male', () => {
-    expect(VOICE_PRESETS.emprendedor.host.es).toMatchObject({
+  it('ships the default espana preset as a measured Castilian male', () => {
+    expect(VOICE_PRESETS.espana.host.es).toMatchObject({
       name: 'es-ES-AlvaroNeural',
       rate: '-6%',
     });

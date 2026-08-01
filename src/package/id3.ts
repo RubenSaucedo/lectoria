@@ -1,5 +1,6 @@
 import NodeID3 from 'node-id3';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import { createBufferHash } from '../identity.js';
 import type {
   Chapter,
   Episode,
@@ -46,16 +47,18 @@ export class Id3Packager implements Packager {
     if (ok !== true) throw new Error(`Failed to write ID3 tags to ${audio.path}`);
 
     const fileInfo = await stat(audio.path);
+    const audioSha256 = createBufferHash(await readFile(audio.path));
 
     return {
       id: script.id,
       scriptId: script.id,
-      documentId: script.id.replace(/-[^-]+$/, ''),
+      documentId: script.documentId,
       language: script.language,
       title: script.episodeTitle,
       description: script.summary,
       audioPath: audio.path,
       audioSizeBytes: fileInfo.size,
+      audioSha256,
       durationSec: audio.durationSec,
       chapters,
       publishedAt: new Date().toISOString(),

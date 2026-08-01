@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { parseStyle, parseSpeakers } from './cli-helpers.js';
+import {
+  exitCodeForItemFailures,
+  parseCostAwarenessMode,
+  parseNonNegativeNumber,
+  parseStyle,
+  parseSpeakers,
+} from './cli-helpers.js';
 
 describe('parseStyle', () => {
   it('defaults to conversational when no style is passed', () => {
@@ -51,6 +57,29 @@ describe('parseSpeakers', () => {
       { id: 'host', name: 'Ava' },
       { id: 'guest', name: 'Jorge' },
     ]);
+  });
+
+  describe('cost CLI parsing', () => {
+    it('accepts supported cost-awareness modes', () => {
+      expect(parseCostAwarenessMode('off')).toBe('off');
+      expect(parseCostAwarenessMode('warn')).toBe('warn');
+      expect(parseCostAwarenessMode('require-approval')).toBe('require-approval');
+    });
+
+    it('rejects unknown modes and invalid thresholds', () => {
+      expect(() => parseCostAwarenessMode('always')).toThrow(/Unknown cost-awareness mode/);
+      expect(() => parseNonNegativeNumber('-1', '--max-estimated-usd')).toThrow(
+        /greater than or equal to zero/
+      );
+      expect(parseNonNegativeNumber('1.25', '--max-estimated-usd')).toBe(1.25);
+    });
+  });
+
+  describe('exitCodeForItemFailures', () => {
+    it('returns failure when a continued item fails', () => {
+      expect(exitCodeForItemFailures(0)).toBe(0);
+      expect(exitCodeForItemFailures(1)).toBe(1);
+    });
   });
 
   it('accepts id-only entries without a name', () => {

@@ -107,9 +107,40 @@ describe('ssmlForSegment', () => {
     expect(out).toContain('es-ES-DarioNeural');
   });
 
-  it('falls back to the host voice for an unmapped speaker id', () => {
+  it('rejects an unmapped explicit speaker id instead of silently using host', () => {
     const voices: VoiceMap = { host: { es: 'es-ES-AlvaroNeural' } };
-    const out = ssmlForSegment('es', voices, seg([{ voice: 'narrator', text: 'Hola' }]));
-    expect(out).toContain('es-ES-AlvaroNeural');
+    expect(() =>
+      ssmlForSegment('es', voices, seg([{ voice: 'narrator', text: 'Hola' }]))
+    ).toThrow(/No voice configured for speaker "narrator"/);
+  });
+
+  it('renders only finite bounded pause values from validated scripts', () => {
+    const voices: VoiceMap = { host: { es: 'es-ES-AlvaroNeural' } };
+    const out = ssmlForSegment(
+      'es',
+      voices,
+      seg([{ voice: 'host', text: 'Hola', pauseAfterMs: 400 }])
+    );
+    expect(out).toContain('<break time="400ms"/>');
+  });
+
+  it('escapes the language attribute for direct library callers', () => {
+    const voices: VoiceMap = { host: { 'es&quot;': 'es-ES-AlvaroNeural' } };
+    const out = ssmlForSegment(
+      'es&quot;',
+      voices,
+      seg([{ voice: 'host', text: 'Hola' }])
+    );
+    expect(out).toContain('xml:lang="es&amp;quot;"');
+    expect(out).not.toContain('xml:lang="es&quot;"');
+  });
+
+  it('rejects invalid style degree values at the SSML boundary', () => {
+    const voices: VoiceMap = {
+      host: { es: { name: 'es-ES-AlvaroNeural', style: 'cheerful', styleDegree: 3 } },
+    };
+    expect(() => ssmlForSegment('es', voices, seg([{ voice: 'host', text: 'Hola' }]))).toThrow(
+      /styleDegree must be between/
+    );
   });
 });

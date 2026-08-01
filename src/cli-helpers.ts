@@ -1,4 +1,5 @@
 import type { DialogueSpeaker, ScriptStyle } from './types.js';
+import type { CostAwarenessMode } from './cost-policy.js';
 
 /**
  * Maps the CLI `--style` + `--speakers` flags to a `ScriptStyle` discriminated
@@ -51,9 +52,40 @@ export function parseSpeakers(input: string | undefined): DialogueSpeaker[] {
   if (parts.length < 2) {
     throw new Error('--speakers needs at least two entries, e.g. host:Ava,guest:Jorge.');
   }
-  return parts.map((part) => {
+  const parsed = parts.map((part) => {
     const [id, name] = part.split(':').map((s) => s?.trim());
     if (!id) throw new Error(`Invalid --speakers entry "${part}". Use id:Name.`);
     return name ? { id, name } : { id };
   });
+  const ids = parsed.map((speaker) => speaker.id);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`--speakers contains duplicate ids: ${ids.join(', ')}.`);
+  }
+  return parsed;
+}
+
+export function parseCostAwarenessMode(
+  input: string | undefined
+): CostAwarenessMode | undefined {
+  if (input === undefined) return undefined;
+  if (input === 'off' || input === 'warn' || input === 'require-approval') return input;
+  throw new Error(
+    `Unknown cost-awareness mode "${input}". Expected: off | warn | require-approval.`
+  );
+}
+
+export function parseNonNegativeNumber(
+  input: string | undefined,
+  optionName: string
+): number | undefined {
+  if (input === undefined) return undefined;
+  const parsed = Number(input);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${optionName} must be a finite number greater than or equal to zero.`);
+  }
+  return parsed;
+}
+
+export function exitCodeForItemFailures(failures: number): 0 | 1 {
+  return failures > 0 ? 1 : 0;
 }

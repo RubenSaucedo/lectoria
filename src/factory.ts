@@ -1,5 +1,5 @@
-import { writeFile } from 'node:fs/promises';
 import { AzureSpeechTts } from './synthesize/azure-speech.js';
+import { atomicWriteFile } from './fs-safe.js';
 import type { LectoriaAuth } from './azure-auth.js';
 import type {
   LanguageCode,
@@ -132,6 +132,7 @@ export function createTTS(opts: CreateTtsOptions): TtsClient {
     return {
       script: {
         id: `ad-hoc-${Date.now()}`,
+        documentId: 'ad-hoc',
         episodeTitle: '',
         language,
         summary: '',
@@ -164,7 +165,7 @@ export function createTTS(opts: CreateTtsOptions): TtsClient {
         voices,
         signal: speakOpts?.signal,
       });
-      await writeFile(outputPath, bytes);
+      await atomicWriteFile(outputPath, bytes);
       return { path: outputPath, durationSec, segmentOffsetsSec };
     },
     synthesizeScript(script, scriptOpts) {

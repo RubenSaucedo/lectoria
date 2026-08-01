@@ -12,13 +12,24 @@ export async function translateToAll(
   model: ScriptModel,
   source: PodcastScript,
   targetLanguages: LanguageCode[],
-  opts: { signal?: AbortSignal; onProgress?: ProgressListener; glossary?: Glossary } = {}
+  opts: {
+    signal?: AbortSignal;
+    onProgress?: ProgressListener;
+    glossary?: Glossary;
+    loadCached?: (language: LanguageCode) => Promise<PodcastScript | undefined>;
+    saveCached?: (script: PodcastScript) => Promise<void>;
+  } = {}
 ): Promise<PodcastScript[]> {
   const out: PodcastScript[] = [];
   for (const lang of targetLanguages) {
     opts.signal?.throwIfAborted();
     if (lang === source.language) {
       out.push(source);
+      continue;
+    }
+    const cached = await opts.loadCached?.(lang);
+    if (cached) {
+      out.push(cached);
       continue;
     }
     opts.onProgress?.({
@@ -32,6 +43,7 @@ export async function translateToAll(
       signal: opts.signal,
       glossary: opts.glossary,
     });
+    await opts.saveCached?.(translated);
     opts.onProgress?.({
       phase: 'translate:complete',
       scriptId: translated.id,

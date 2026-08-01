@@ -2,26 +2,29 @@ import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Document, DocumentParser, SourceFile } from '../types.js';
+import type { Document, DocumentParser, ParserOptions, SourceFile } from '../types.js';
+import { ensureContent, resolveSourceLanguage, sectionsFromHtml } from './content.js';
 
 export class HtmlParser implements DocumentParser {
   readonly format = 'html' as const;
 
-  async parse(file: SourceFile): Promise<Document> {
+  async parse(file: SourceFile, opts: ParserOptions = {}): Promise<Document> {
     const html = file.bytes.toString('utf-8');
     const dom = new JSDOM(html, { url: file.uri.startsWith('http') ? file.uri : 'https://lectoria.local/' });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
 
-    const text = (article?.textContent ?? dom.window.document.body.textContent ?? '').trim();
-    const paragraphs = text.split(/\n{2,}/).map((p) => p.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const content = article?.content ?? dom.window.document.body.innerHTML;
+    const sections = ensureContent(sectionsFromHtml(content), file.uri);
+    const text = sections.flatMap((section) => [section.heading ?? '', ...section.paragraphs]).join('\n');
     const title = article?.title?.trim() || dom.window.document.title?.trim() || filenameOf(file.uri);
 
     return {
       id: file.id,
+      contentHash: file.contentHash,
       title,
-      language: 'en',
-      sections: [{ paragraphs }],
+      language: resolveSourceLanguage(text, opts.sourceLanguage),
+      sections,
       sourcePath: file.sourcePath,
       metadata: {
         sourceUri: file.uri,

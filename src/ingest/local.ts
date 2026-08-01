@@ -1,7 +1,8 @@
-import { readFile, stat, readdir } from 'node:fs/promises';
+import { readFile, realpath, stat, readdir } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { IngestSource, SourceFile, SourceFormat } from '../types.js';
+import { createContentHash, createDocumentId } from '../identity.js';
 
 const FORMAT_BY_EXT: Record<string, SourceFormat> = {
   '.pdf': 'pdf',
@@ -48,18 +49,19 @@ export class LocalFileSystemIngest implements IngestSource {
 
   async fetch(uri: string): Promise<SourceFile[]> {
     const absolute = isAbsolute(uri) ? uri : resolve(process.cwd(), uri);
-    const info = await stat(absolute);
+    const canonical = await realpath(absolute);
+    const info = await stat(canonical);
 
     if (info.isDirectory()) {
       // Walk the tree rooted at `absolute`. Files at the root level get
       // sourcePath = '<stem>'; files in subdirs get '<subdir>/<stem>'.
-      return this.#walkDirectory(absolute, absolute);
+      return this.#walkDirectory(canonical, canonical);
     }
 
     // Single-file ingest. The relative root is the file's own directory so
     // the sourcePath collapses to just the file's stem — matches the legacy
     // behavior single-file consumers expect.
-    return [await this.#loadFile(absolute, dirname(absolute))];
+    return [await this.#loadFile(canonical, dirname(canonical))];
   }
 
   async #walkDirectory(root: string, dir: string): Promise<SourceFile[]> {
@@ -91,6 +93,7 @@ export class LocalFileSystemIngest implements IngestSource {
     }
     const bytes = await readFile(absolutePath);
     const stem = basename(absolutePath, ext);
+    const sourceUri = pathToFileURL(absolutePath).toString();
 
     // Build sourcePath = "<subdir>/<stem>" with POSIX slashes regardless of
     // host OS. relative() may emit Windows backslashes; normalize them.
@@ -102,8 +105,9 @@ export class LocalFileSystemIngest implements IngestSource {
         : `${relativeDir.split(sep).join('/')}/${stem}`;
 
     return {
-      id: stem,
-      uri: pathToFileURL(absolutePath).toString(),
+      id: createDocumentId(stem, sourceUri),
+      contentHash: createContentHash(bytes),
+      uri: sourceUri,
       format,
       bytes,
       fetchedAt: new Date().toISOString(),

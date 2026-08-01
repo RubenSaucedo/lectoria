@@ -6,6 +6,7 @@ function fakeDoc(charsPerSection: number, sectionCount: number): Document {
   const para = 'x'.repeat(charsPerSection);
   return {
     id: 'fake',
+    contentHash: '0'.repeat(64),
     title: 'Fake',
     language: 'en',
     sourcePath: 'fake',
@@ -60,7 +61,17 @@ describe('estimateCost', () => {
     const en = result.languages.find((l) => l.language === 'en')!;
     const es = result.languages.find((l) => l.language === 'es')!;
     expect(en.reusesSourceScript).toBe(true);
+    expect(en.generatedDirectly).toBe(true);
     expect(es.reusesSourceScript).toBe(false);
+    expect(es.generatedDirectly).toBe(false);
+  });
+
+  it('treats the first requested language as direct generation regardless of source language', async () => {
+    const doc = { ...fakeDoc(500, 2), language: 'es' };
+    const result = await estimateCost({ document: doc, languages: ['en', 'es'] });
+    expect(result.languages[0]!.language).toBe('en');
+    expect(result.languages[0]!.generatedDirectly).toBe(true);
+    expect(result.languages[1]!.generatedDirectly).toBe(false);
   });
 
   it('produces more TTS characters for podcast style than verbatim', async () => {
@@ -81,6 +92,21 @@ describe('estimateCost', () => {
     const cheap = await estimateCost({ document: doc }, { pricing: { azureSpeechPer1M: 1 } });
     const expensive = await estimateCost({ document: doc }, { pricing: { azureSpeechPer1M: 100 } });
     expect(expensive.total.usd.tts).toBeGreaterThan(cheap.total.usd.tts);
+  });
+
+  it('rejects invalid pricing instead of producing a fail-open estimate', async () => {
+    await expect(
+      estimateCost(
+        { document: fakeDoc(1000, 1) },
+        { pricing: { openAiInputPer1M: Number.NaN } }
+      )
+    ).rejects.toThrow(/pricing.openAiInputPer1M/);
+    await expect(
+      estimateCost(
+        { document: fakeDoc(1000, 1) },
+        { pricing: { azureSpeechPer1M: -1 } }
+      )
+    ).rejects.toThrow(/pricing.azureSpeechPer1M/);
   });
 
   it('throws when neither source nor document is provided', async () => {

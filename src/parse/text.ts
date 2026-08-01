@@ -1,17 +1,14 @@
-import mammoth from 'mammoth';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Document, DocumentParser, ParserOptions, SourceFile } from '../types.js';
-import { ensureContent, resolveSourceLanguage, sectionsFromHtml } from './content.js';
+import { ensureContent, resolveSourceLanguage, sectionsFromPlainText } from './content.js';
 
-export class DocxParser implements DocumentParser {
-  readonly format = 'docx' as const;
+export class TextParser implements DocumentParser {
+  readonly format = 'txt' as const;
 
   async parse(file: SourceFile, opts: ParserOptions = {}): Promise<Document> {
-    const { value, messages } = await mammoth.convertToHtml({ buffer: file.bytes });
-    const sections = ensureContent(sectionsFromHtml(value), file.uri);
-    const text = sections.flatMap((section) => [section.heading ?? '', ...section.paragraphs]).join('\n');
-
+    const text = file.bytes.toString('utf-8');
+    const sections = ensureContent(sectionsFromPlainText(text), file.uri);
     return {
       id: file.id,
       contentHash: file.contentHash,
@@ -23,7 +20,6 @@ export class DocxParser implements DocumentParser {
         sourceUri: file.uri,
         sourceFormat: file.format,
         fetchedAt: file.fetchedAt,
-        conversionWarnings: messages.map((message) => message.message),
       },
     };
   }
@@ -34,7 +30,7 @@ function filenameOf(uri: string): string {
     try {
       return basename(fileURLToPath(uri));
     } catch {
-      // Malformed file URI — fall through to the raw basename.
+      // Fall through to a best-effort basename.
     }
   }
   return basename(uri);

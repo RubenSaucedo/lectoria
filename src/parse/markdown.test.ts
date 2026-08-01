@@ -11,6 +11,7 @@ function sourceFile(text: string, overrides: Partial<SourceFile> = {}): SourceFi
     fetchedAt: '2026-06-18T00:00:00.000Z',
     sourcePath: 'fixture',
     ...overrides,
+    contentHash: overrides.contentHash ?? '0'.repeat(64),
   };
 }
 
@@ -44,7 +45,7 @@ describe('MarkdownParser', () => {
 
   it('forwards sourcePath from the SourceFile to the Document', async () => {
     const doc = await new MarkdownParser().parse(
-      sourceFile('# X', { sourcePath: 'python/lesson-1' })
+      sourceFile('# X\n\nContent.', { sourcePath: 'python/lesson-1' })
     );
     expect(doc.sourcePath).toBe('python/lesson-1');
   });
@@ -61,5 +62,48 @@ describe('MarkdownParser', () => {
       sourceFile('## Subhead\n\npara.', { uri: 'file:///path/to/notes.md' })
     );
     expect(doc.title).toBe('notes.md');
+  });
+
+  it('preserves lists, code blocks, and image alt text for narration', async () => {
+    const doc = await new MarkdownParser().parse(
+      sourceFile(
+        [
+          '# Lesson',
+          '',
+          '- first item',
+          '- second item',
+          '',
+          '```ts',
+          'const answer = 42;',
+          '```',
+          '',
+          '![Architecture diagram](diagram.png)',
+        ].join('\n')
+      )
+    );
+    const content = doc.sections.flatMap((section) => section.paragraphs).join('\n');
+    expect(content).toContain('- first item');
+    expect(content).toContain('Code (ts):');
+    expect(content).toContain('const answer = 42;');
+    expect(content).toContain('Architecture diagram');
+  });
+
+  it('detects Spanish and honors an explicit source-language override', async () => {
+    const spanish = await new MarkdownParser().parse(
+      sourceFile('# Tema\n\nEste es un texto para aprender de la arquitectura y los sistemas.')
+    );
+    expect(spanish.language).toBe('es');
+
+    const overridden = await new MarkdownParser().parse(
+      sourceFile('# Theme\n\nThis is the source content.'),
+      { sourceLanguage: 'fr' }
+    );
+    expect(overridden.language).toBe('fr');
+  });
+
+  it('rejects empty or heading-only documents before paid stages', async () => {
+    await expect(new MarkdownParser().parse(sourceFile('# Empty'))).rejects.toThrow(
+      /No readable text was extracted/
+    );
   });
 });

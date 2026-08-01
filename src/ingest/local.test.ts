@@ -37,8 +37,23 @@ describe('LocalFileSystemIngest.fetch (single file)', () => {
     expect(files).toHaveLength(1);
     expect(files[0]!.sourcePath).toBe('lesson');
     expect(files[0]!.format).toBe('md');
-    expect(files[0]!.id).toBe('lesson');
+    expect(files[0]!.id).toMatch(/^lesson-[a-f0-9]{12}$/);
     expect(files[0]!.bytes.toString('utf-8')).toContain('# Lesson');
+  });
+
+  it('keeps source identity stable while contentHash tracks revisions', async () => {
+    const path = join(tmpRoot, 'lesson.md');
+    const adapter = new LocalFileSystemIngest();
+    await writeFile(path, '# Lesson\nbody');
+    const first = (await adapter.fetch(path))[0]!;
+    const second = (await adapter.fetch(path))[0]!;
+    expect(second.id).toBe(first.id);
+    expect(second.contentHash).toBe(first.contentHash);
+
+    await writeFile(path, '# Lesson\nupdated body');
+    const changed = (await adapter.fetch(path))[0]!;
+    expect(changed.id).toBe(first.id);
+    expect(changed.contentHash).not.toBe(first.contentHash);
   });
 
   it('throws on an unsupported extension', async () => {

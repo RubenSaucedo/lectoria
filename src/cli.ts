@@ -1,23 +1,39 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import { Command } from 'commander';
+import { createInterface } from 'node:readline/promises';
 import { readFile, readdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { loadConfig } from './config.js';
 import { runPipeline } from './pipeline.js';
 import { ingest } from './ingest/index.js';
 import { parse } from './parse/index.js';
 import { createStreamLogger } from './logger.js';
-import { parseStyle } from './cli-helpers.js';
+import {
+  parseCostAwarenessMode,
+  exitCodeForItemFailures,
+  parseNonNegativeNumber,
+  parseStyle,
+} from './cli-helpers.js';
 import { VOICE_PRESETS, DEFAULT_VOICE_PRESET } from './voices/presets.js';
-import type { Glossary, LanguageCode } from './types.js';
+import type { Glossary } from './types.js';
+import { normalizeLanguageCodes } from './validation.js';
+import {
+  formatCostAssessment,
+  type CostAssessment,
+  type CostPolicy,
+} from './cost-policy.js';
 
 const program = new Command();
+const packageVersion = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf-8')
+) as { version: string };
 
 program
   .name('lectoria')
   .description('Turn documents into multilingual podcast episodes.')
-  .version('0.0.1');
+  .version(packageVersion.version);
 
 program
   .command('run')
@@ -30,6 +46,7 @@ program
     'Script style: podcast | conversational | verbatim | dialogue.',
     'conversational'
   )
+  .option('--source-lang <code>', 'Explicit source language (BCP-47), e.g. en, es, or es-MX.')
   .option(
     '--speakers <list>',
     'Dialogue cast as id:Name pairs, comma-separated. ' +
@@ -50,6 +67,21 @@ program
     '--no-distribute',
     'Skip RSS feed + episodes.json generation. Produce audio files only.'
   )
+  .option('--no-resume', 'Ignore reusable checkpoints and repeat every pipeline stage.')
+  .option(
+    '--continue-on-error',
+    'Continue processing other source files when one item fails.'
+  )
+  .option('--checkpoint-dir <dir>', 'Directory for resumable pipeline checkpoints.')
+  .option(
+    '--cost-awareness <mode>',
+    'Cost preflight: off | warn | require-approval. Default: warn.'
+  )
+  .option('--warn-above-usd <amount>', 'Warn/confirm at or above this estimated USD cost.')
+  .option('--warn-above-chars <count>', 'Warn/confirm at or above this source character count.')
+  .option('--warn-above-minutes <minutes>', 'Warn/confirm at or above this estimated audio duration.')
+  .option('--max-estimated-usd <amount>', 'Hard estimated-cost ceiling; stops before Azure calls.')
+  .option('-y, --yes', 'Approve a cost warning without an interactive prompt.')
   .option(
     '--glossary <path>',
     'Path to a JSON glossary file: { "terms": ["MCP", { "term": "DA", "meaning": "Domain Admin" }] }. ' +
@@ -68,6 +100,16 @@ program
         recursive?: boolean;
         distribute?: boolean;
         glossary?: string;
+        sourceLang?: string;
+        resume?: boolean;
+        continueOnError?: boolean;
+        checkpointDir?: string;
+        costAwareness?: string;
+        warnAboveUsd?: string;
+        warnAboveChars?: string;
+        warnAboveMinutes?: string;
+        maxEstimatedUsd?: string;
+        yes?: boolean;
       }
     ) => {
       // Feed --voice through the env the config layer reads, so the preset is
@@ -77,23 +119,36 @@ program
       const config = loadConfig();
       if (opts.out) (config as { outDir: string }).outDir = opts.out;
       const targetLanguages = opts.lang
-        ? (opts.lang.split(',').map((s) => s.trim()).filter(Boolean) as LanguageCode[])
+        ? normalizeLanguageCodes(opts.lang.split(','), '--lang')
         : undefined;
       const style = parseStyle(opts.style, opts.speakers);
       const glossary = opts.glossary ? await loadGlossaryFromFile(opts.glossary) : undefined;
+      const costPolicy = buildCliCostPolicy(opts);
 
+      let itemFailures = 0;
       const episodes = await runPipeline(config, {
         source,
         targetLanguages,
         style,
         recursive: opts.recursive,
-        distribute: opts.distribute,
+        distribute: opts.distribute === false ? false : undefined,
         glossary,
+        sourceLanguage: opts.sourceLang
+          ? normalizeLanguageCodes([opts.sourceLang], '--source-lang')[0]
+          : undefined,
+        resume: opts.resume,
+        continueOnError: opts.continueOnError,
+        checkpointDir: opts.checkpointDir,
+        costPolicy,
         logger: createStreamLogger(process.stderr),
+        onItemError: () => {
+          itemFailures++;
+        },
       });
       for (const ep of episodes) {
         console.log(`[ok] ${ep.language}\t${ep.title}\t${ep.audioPath}`);
       }
+      process.exitCode = exitCodeForItemFailures(itemFailures);
     }
   );
 
@@ -213,13 +268,17 @@ async function loadGlossaryFromFile(path: string): Promise<Glossary> {
   try {
     raw = await readFile(absolute, 'utf-8');
   } catch (err) {
-    throw new Error(`--glossary "${path}" could not be read: ${(err as Error).message}`);
+    throw new Error(`--glossary "${path}" could not be read: ${(err as Error).message}`, {
+      cause: err,
+    });
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`--glossary "${path}" is not valid JSON: ${(err as Error).message}`);
+    throw new Error(`--glossary "${path}" is not valid JSON: ${(err as Error).message}`, {
+      cause: err,
+    });
   }
   if (
     !parsed ||
@@ -231,4 +290,66 @@ async function loadGlossaryFromFile(path: string): Promise<Glossary> {
     );
   }
   return parsed as Glossary;
+}
+
+function buildCliCostPolicy(opts: {
+  costAwareness?: string;
+  warnAboveUsd?: string;
+  warnAboveChars?: string;
+  warnAboveMinutes?: string;
+  maxEstimatedUsd?: string;
+  yes?: boolean;
+}): CostPolicy | false | undefined {
+  const mode = parseCostAwarenessMode(opts.costAwareness);
+  if (mode === 'off') return false;
+  const warnAboveUsd = parseNonNegativeNumber(opts.warnAboveUsd, '--warn-above-usd');
+  const warnAboveSourceCharacters = parseNonNegativeNumber(
+    opts.warnAboveChars,
+    '--warn-above-chars'
+  );
+  const warnAboveAudioMinutes = parseNonNegativeNumber(
+    opts.warnAboveMinutes,
+    '--warn-above-minutes'
+  );
+  const maxEstimatedUsd = parseNonNegativeNumber(
+    opts.maxEstimatedUsd,
+    '--max-estimated-usd'
+  );
+  if (
+    mode === undefined &&
+    warnAboveUsd === undefined &&
+    warnAboveSourceCharacters === undefined &&
+    warnAboveAudioMinutes === undefined &&
+    maxEstimatedUsd === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(mode ? { mode } : {}),
+    ...(warnAboveUsd !== undefined ? { warnAboveUsd } : {}),
+    ...(warnAboveSourceCharacters !== undefined ? { warnAboveSourceCharacters } : {}),
+    ...(warnAboveAudioMinutes !== undefined ? { warnAboveAudioMinutes } : {}),
+    ...(maxEstimatedUsd !== undefined ? { maxEstimatedUsd } : {}),
+    ...(mode === 'require-approval'
+      ? { approve: createCliCostApproval(Boolean(opts.yes)) }
+      : {}),
+  };
+}
+
+function createCliCostApproval(
+  autoApprove: boolean
+): (assessment: CostAssessment) => Promise<boolean> {
+  if (autoApprove) return async () => true;
+  return async (assessment) => {
+    if (!process.stdin.isTTY || !process.stderr.isTTY) return false;
+    const readline = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+      const answer = await readline.question(
+        `[cost] ${formatCostAssessment(assessment)}. Continue? [y/N] `
+      );
+      return /^(y|yes)$/i.test(answer.trim());
+    } finally {
+      readline.close();
+    }
+  };
 }

@@ -21,7 +21,7 @@ const VoiceSpecSchema = z.object({
   rate: z.string().optional(),
   pitch: z.string().optional(),
   style: z.string().optional(),
-  styleDegree: z.number().optional(),
+  styleDegree: z.number().finite().min(0.01).max(2).optional(),
 });
 
 const VoiceValueSchema = z.union([z.string().min(1), VoiceSpecSchema]);
@@ -52,6 +52,7 @@ const ConfigSchema = z.object({
     author: z.string(),
     siteUrl: z.string().url(),
     imageUrl: z.string().url(),
+    audioBaseUrl: z.string().url().optional(),
   }),
   /**
    * Optional project glossary of terms that must keep English pronunciation
@@ -108,6 +109,7 @@ export function loadConfig(opts: { requireResources?: boolean } = {}): Config {
       author: process.env.LECTORIA_FEED_AUTHOR ?? '',
       siteUrl: process.env.LECTORIA_FEED_SITE_URL ?? 'https://example.com',
       imageUrl: process.env.LECTORIA_FEED_IMAGE_URL ?? 'https://example.com/cover.jpg',
+      audioBaseUrl: process.env.LECTORIA_AUDIO_BASE_URL || undefined,
     },
     glossary: loadGlossaryFromEnv(),
   };
@@ -128,7 +130,8 @@ function loadGlossaryFromEnv(): unknown {
     return JSON.parse(raw);
   } catch (err) {
     throw new Error(
-      `Failed to read LECTORIA_GLOSSARY_FILE="${path}": ${(err as Error).message}`
+      `Failed to read LECTORIA_GLOSSARY_FILE="${path}": ${(err as Error).message}`,
+      { cause: err }
     );
   }
 }
@@ -191,6 +194,7 @@ function mergeWithDefaults(input: DeepPartial<Config>): Config {
       author: input.feed?.author ?? '',
       siteUrl: input.feed?.siteUrl ?? 'https://example.com',
       imageUrl: input.feed?.imageUrl ?? 'https://example.com/cover.jpg',
+      audioBaseUrl: input.feed?.audioBaseUrl,
     },
     glossary: input.glossary as Glossary | undefined,
   };

@@ -62,6 +62,21 @@ export const VOICE_PRESETS: Record<string, VoiceMap> = {
       en: { name: 'en-US-BrianMultilingualNeural' },
     },
   },
+
+  /**
+   * Female counterpart to `intermedio`: Ximena's multilingual Spanish keeps
+   * the same broadly international character and measured pace as Tristan.
+   */
+  'intermedio-femenino': {
+    host: {
+      es: { name: 'es-ES-XimenaMultilingualNeural', rate: '-4%' },
+      en: { name: 'en-US-AvaMultilingualNeural', rate: '-4%' },
+    },
+    guest: {
+      es: { name: 'es-ES-ElviraNeural', rate: '-2%' },
+      en: { name: 'en-US-JennyNeural' },
+    },
+  },
 };
 
 /** The preset used when none is requested. */

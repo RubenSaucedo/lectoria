@@ -14,6 +14,7 @@ const feedConfig = {
   siteUrl: 'https://example.com',
   imageUrl: 'https://example.com/cover.png',
 };
+const audioBaseUrl = 'https://cdn.example.com/lectoria/';
 
 beforeEach(async () => {
   outDir = await mkdtemp(join(tmpdir(), 'lectoria-rss-'));
@@ -35,6 +36,7 @@ async function makeEpisode(id: string, title: string): Promise<Episode> {
     description: `${title} description`,
     audioPath,
     audioSizeBytes: 4,
+    audioSha256: '0'.repeat(64),
     durationSec: 42,
     chapters: [],
     publishedAt: '2026-06-18T12:00:00.000Z',
@@ -43,7 +45,7 @@ async function makeEpisode(id: string, title: string): Promise<Episode> {
 
 describe('RssDistributor.publish', () => {
   it('writes episodes.json + feed.xml containing the episode title', async () => {
-    const dist = new RssDistributor({ outDir, feed: feedConfig });
+    const dist = new RssDistributor({ outDir, feed: feedConfig, audioBaseUrl });
     const ep = await makeEpisode('ep-1', 'Episode One');
 
     await dist.publish(ep);
@@ -58,7 +60,7 @@ describe('RssDistributor.publish', () => {
   });
 
   it('upserts: re-publishing the same id replaces the entry instead of duplicating', async () => {
-    const dist = new RssDistributor({ outDir, feed: feedConfig });
+    const dist = new RssDistributor({ outDir, feed: feedConfig, audioBaseUrl });
     const first = await makeEpisode('ep-1', 'Old Title');
     await dist.publish(first);
 
@@ -75,7 +77,7 @@ describe('RssDistributor.publish', () => {
   });
 
   it('appends a second episode to the same feed', async () => {
-    const dist = new RssDistributor({ outDir, feed: feedConfig });
+    const dist = new RssDistributor({ outDir, feed: feedConfig, audioBaseUrl });
     await dist.publish(await makeEpisode('ep-1', 'One'));
     await dist.publish(await makeEpisode('ep-2', 'Two'));
 
@@ -84,7 +86,7 @@ describe('RssDistributor.publish', () => {
   });
 
   it('omits episodes from feed.xml whose audio file no longer exists', async () => {
-    const dist = new RssDistributor({ outDir, feed: feedConfig });
+    const dist = new RssDistributor({ outDir, feed: feedConfig, audioBaseUrl });
     const ep = await makeEpisode('ep-gone', 'Vanished');
     await dist.publish(ep);
     // Yank the audio out from under the index.
@@ -96,5 +98,24 @@ describe('RssDistributor.publish', () => {
     const xml = await readFile(join(outDir, 'feed.xml'), 'utf-8');
     expect(xml).toContain('Still Here');
     expect(xml).not.toContain('Vanished');
+  });
+
+  it('includes the output-relative public path in feed and enclosure URLs', async () => {
+    const dist = new RssDistributor({
+      outDir,
+      feed: feedConfig,
+      audioBaseUrl,
+      publicPath: 'courses/python',
+    });
+    await dist.publish(await makeEpisode('ep-1', 'One'));
+    const xml = await readFile(join(outDir, 'feed.xml'), 'utf-8');
+    expect(xml).toContain('https://cdn.example.com/lectoria/courses/python/feed.xml');
+    expect(xml).toContain('https://cdn.example.com/lectoria/courses/python/ep-1.mp3');
+  });
+
+  it('fails closed when episodes.json is malformed', async () => {
+    await writeFile(join(outDir, 'episodes.json'), '{broken');
+    const dist = new RssDistributor({ outDir, feed: feedConfig, audioBaseUrl });
+    await expect(dist.publish(await makeEpisode('ep-1', 'One'))).rejects.toThrow(/Corrupt episode index/);
   });
 });

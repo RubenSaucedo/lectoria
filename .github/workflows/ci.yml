@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '22']
+        node: ['22', '24']
 
     steps:
       - uses: actions/checkout@v4
@@ -36,14 +36,20 @@ jobs:
       - name: Type-check (incl. tests)
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
       - name: Build
         run: npm run build
 
       - name: Run tests
         run: npm test
 
-  # Smoke-test that the published tarball would contain what we expect —
-  # catches accidental .npmignore drift and missing "files" entries.
+      - name: Audit production dependencies
+        run: npm run audit:prod
+
+  # Install the exact tarball with lifecycle scripts disabled, then import
+  # the public API and invoke the packaged CLI.
   pack:
     name: pack (dry-run)
     runs-on: ubuntu-latest
@@ -55,4 +61,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npm pack --dry-run
+      - run: npm run test:package

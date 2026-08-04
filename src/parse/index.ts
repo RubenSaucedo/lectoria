@@ -3,18 +3,25 @@ import { PdfParser } from './pdf.js';
 import { DocxParser } from './docx.js';
 import { MarkdownParser } from './markdown.js';
 import { HtmlParser } from './html.js';
+import { TextParser } from './text.js';
+import type { ParserOptions } from '../types.js';
 
-const parsers: DocumentParser[] = [
+export const defaultParsers: readonly DocumentParser[] = [
   new PdfParser(),
   new DocxParser(),
   new MarkdownParser(),
   new HtmlParser(),
+  new TextParser(),
 ];
 
-export async function parse(file: SourceFile): Promise<Document> {
-  const parser = parsers.find((p) => p.format === file.format);
-  if (!parser) throw new Error(`No parser registered for format "${file.format}".`);
-  return parser.parse(file);
+export interface ParseOptions extends ParserOptions {
+  parsers?: readonly DocumentParser[];
 }
 
-export { PdfParser, DocxParser, MarkdownParser, HtmlParser };
+export async function parse(file: SourceFile, opts: ParseOptions = {}): Promise<Document> {
+  const parser = (opts.parsers ?? defaultParsers).find((candidate) => candidate.format === file.format);
+  if (!parser) throw new Error(`No parser registered for format "${file.format}".`);
+  return parser.parse(file, { sourceLanguage: opts.sourceLanguage });
+}
+
+export { PdfParser, DocxParser, MarkdownParser, HtmlParser, TextParser };

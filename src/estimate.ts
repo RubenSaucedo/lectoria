@@ -1,6 +1,7 @@
 import { ingest } from './ingest/index.js';
 import { parse } from './parse/index.js';
 import type { Document, LanguageCode, ScriptStyle } from './types.js';
+import { normalizeLanguageCodes } from './validation.js';
 
 /**
  * Pricing table used by `estimateCost()`. All prices are USD per **one
@@ -50,7 +51,9 @@ export interface EstimateOptions {
 
 export interface LanguageEstimate {
   language: LanguageCode;
-  /** Whether this language reuses the source script (no translate call needed). */
+  /** Whether this language is generated directly rather than translated. */
+  generatedDirectly: boolean;
+  /** @deprecated Use `generatedDirectly`. */
   reusesSourceScript: boolean;
   scriptInputTokens: number;
   scriptOutputTokens: number;
@@ -114,12 +117,15 @@ export async function estimateCost(
 ): Promise<EstimateResult> {
   const document = input.document ?? (await parseOnly(input.source));
   const style: ScriptStyle = input.style ?? { kind: 'conversational' };
-  const languages =
+  const languages = normalizeLanguageCodes(
     input.languages && input.languages.length > 0
       ? input.languages
-      : [document.language as LanguageCode];
+      : [document.language as LanguageCode],
+    'estimate languages'
+  );
 
   const pricing: PricingTable = { ...DEFAULT_PRICING, ...opts.pricing };
+  validatePricing(pricing);
 
   const sourceCharacters = documentCharacterCount(document);
   const sourceTokens = approxTokens(sourceCharacters);
@@ -134,15 +140,15 @@ export async function estimateCost(
   const SYSTEM_PROMPT_TOKENS_PER_CALL = 400;
   const expansion = outputExpansion(style.kind);
 
-  const languageEstimates: LanguageEstimate[] = languages.map((language) => {
-    const reusesSourceScript = language === document.language;
+  const languageEstimates: LanguageEstimate[] = languages.map((language, index) => {
+    const generatedDirectly = index === 0;
 
     // The first language goes through generateScript; the others go through
     // translateScript with the already-generated source script.
     let scriptInputTokens: number;
     let scriptOutputTokens: number;
 
-    if (reusesSourceScript) {
+    if (generatedDirectly) {
       scriptInputTokens = sourceTokens + numScriptChunks * SYSTEM_PROMPT_TOKENS_PER_CALL;
       scriptOutputTokens = Math.round(sourceTokens * expansion);
     } else {
@@ -166,15 +172,16 @@ export async function estimateCost(
 
     return {
       language,
-      reusesSourceScript,
+      generatedDirectly,
+      reusesSourceScript: generatedDirectly,
       scriptInputTokens,
       scriptOutputTokens,
       ttsCharacters,
       audioMinutes,
       usd: {
-        script: round2(scriptUsd),
-        tts: round2(ttsUsd),
-        total: round2(scriptUsd + ttsUsd),
+        script: scriptUsd,
+        tts: ttsUsd,
+        total: scriptUsd + ttsUsd,
       },
     };
   });
@@ -186,9 +193,9 @@ export async function estimateCost(
       ttsCharacters: acc.ttsCharacters + l.ttsCharacters,
       audioMinutes: acc.audioMinutes + l.audioMinutes,
       usd: {
-        script: round2(acc.usd.script + l.usd.script),
-        tts: round2(acc.usd.tts + l.usd.tts),
-        total: round2(acc.usd.total + l.usd.total),
+        script: acc.usd.script + l.usd.script,
+        tts: acc.usd.tts + l.usd.tts,
+        total: acc.usd.total + l.usd.total,
       },
     }),
     {
@@ -267,6 +274,10 @@ function outputExpansion(style: ScriptStyle['kind']): number {
   }
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+function validatePricing(pricing: PricingTable): void {
+  for (const [name, value] of Object.entries(pricing)) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`pricing.${name} must be a finite number greater than or equal to zero.`);
+    }
+  }
 }

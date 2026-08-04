@@ -1,5 +1,4 @@
 import * as sdk from 'microsoft-cognitiveservices-speech-sdk';
-import { writeFile } from 'node:fs/promises';
 import {
   COGNITIVE_SERVICES_SCOPE,
   resolveCredential,
@@ -15,6 +14,8 @@ import type {
   VoiceSpec,
   VoiceValue,
 } from '../types.js';
+import { atomicWriteFile } from '../fs-safe.js';
+import { validateScriptVoiceCoverage } from '../validation.js';
 
 export interface AzureSpeechTtsOptions {
   region: string;
@@ -37,6 +38,12 @@ export interface AzureSpeechTtsOptions {
    * synthesised so consumers can drive a progress bar.
    */
   onProgress?: ProgressListener;
+  /** Deadline for each Speech request. Defaults to 120 seconds. */
+  timeoutMs?: number;
+  /** Number of transient retries after the first attempt. Defaults to 2. */
+  maxRetries?: number;
+  /** Base retry delay in milliseconds. Defaults to 500. */
+  retryDelayMs?: number;
 }
 
 /**
@@ -74,7 +81,7 @@ export class AzureSpeechTts implements TtsProvider {
     opts: { outputPath: string; voices: VoiceMap; signal?: AbortSignal }
   ): Promise<SynthesizedAudio> {
     const { bytes, durationSec, segmentOffsetsSec } = await this.synthesizeToBuffer(script, opts);
-    await writeFile(opts.outputPath, bytes);
+    await atomicWriteFile(opts.outputPath, bytes);
     return { path: opts.outputPath, durationSec, segmentOffsetsSec };
   }
 
@@ -87,6 +94,7 @@ export class AzureSpeechTts implements TtsProvider {
     script: PodcastScript,
     opts: { voices: VoiceMap; signal?: AbortSignal }
   ): Promise<{ bytes: Buffer; durationSec: number; segmentOffsetsSec: number[] }> {
+    validateScriptVoiceCoverage(script, opts.voices);
     const speechConfig = await this.#buildSpeechConfig();
     speechConfig.speechSynthesisOutputFormat = sdk.SpeechSynthesisOutputFormat.Audio24Khz96KBitRateMonoMp3;
 
@@ -101,7 +109,12 @@ export class AzureSpeechTts implements TtsProvider {
       segmentOffsetsSec.push(cumulativeMs / 1000);
       await this.#refreshAuth(speechConfig);
       const ssml = ssmlForSegment(script.language, opts.voices, segment);
-      const { bytes, durationMs } = await synthesizeSsml(speechConfig, ssml);
+      const { bytes, durationMs } = await synthesizeSsmlWithRetry(speechConfig, ssml, {
+        signal: opts.signal,
+        timeoutMs: this.#options.timeoutMs ?? 120_000,
+        maxRetries: this.#options.maxRetries ?? 2,
+        retryDelayMs: this.#options.retryDelayMs ?? 500,
+      });
       audioChunks.push(bytes);
       cumulativeMs += durationMs;
       this.#onProgress?.({
@@ -147,26 +160,18 @@ export class AzureSpeechTts implements TtsProvider {
  * Resolves the voice for a given logical speaker + language into a normalized
  * {@link VoiceSpec} (bare voice-id values become `{ name }`).
  *
- * Falls back to `host` when `voiceKey` is missing or unmapped — so existing
- * single-voice scripts (every utterance with voice="host" or voice undefined)
- * keep working unchanged.
- *
- * Throws when even `host` is not configured for `language`, with a message
- * that lists what IS configured so the caller can fix their VoiceMap fast.
+ * An omitted speaker means `host`; an explicit speaker must have its own
+ * mapping. Silent speaker fallback makes dialogue output misleading.
  */
 function resolveVoice(language: string, voices: VoiceMap, voiceKey: string | undefined): VoiceSpec {
   const key = voiceKey ?? 'host';
   const candidate = voices[key]?.[language];
   if (candidate) return normalizeVoice(candidate);
 
-  // Explicit speaker id requested but unmapped — surface what IS available
-  // so the caller can either add the mapping or fix the speaker id.
   if (key !== 'host') {
-    const fallback = voices.host?.[language];
-    if (fallback) return normalizeVoice(fallback);
     const known = Object.keys(voices).join(', ');
     throw new Error(
-      `No voice configured for speaker "${key}" in language "${language}", and no "host" fallback either. Configured speaker ids: ${known}.`
+      `No voice configured for speaker "${key}" in language "${language}". Configured speaker ids: ${known}.`
     );
   }
   const known = Object.keys(voices.host ?? {}).join(', ');
@@ -195,7 +200,7 @@ function voiceBlock(v: VoiceSpec, body: string): string {
   const pitchAttr = v.pitch ? ` pitch="${escapeXml(v.pitch)}"` : '';
   let inner = `<prosody rate="${escapeXml(rate)}"${pitchAttr}>${body}</prosody>`;
   if (v.style) {
-    const degree = v.styleDegree != null ? ` styledegree="${v.styleDegree}"` : '';
+    const degree = v.styleDegree != null ? ` styledegree="${formatStyleDegree(v.styleDegree)}"` : '';
     inner = `<mstts:express-as style="${escapeXml(v.style)}"${degree}>${inner}</mstts:express-as>`;
   }
   return `<voice name="${escapeXml(v.name)}">${inner}</voice>`;
@@ -226,7 +231,7 @@ export function ssmlForSegment(
     const voice = voiceFor(u.voice);
     const key = voiceKeyOf(voice);
     const safeText = renderUtteranceText(u.text, language);
-    const pause = u.pauseAfterMs ? `<break time="${u.pauseAfterMs}ms"/>` : '';
+    const pause = renderPause(u.pauseAfterMs);
     const fragment = `${safeText} ${pause}`;
     const last = runs[runs.length - 1];
     if (last && last.key === key) {
@@ -244,7 +249,7 @@ export function ssmlForSegment(
   const mstts = usesStyle ? ' xmlns:mstts="http://www.w3.org/2001/mstts"' : '';
 
   return [
-    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"${mstts} xml:lang="${language}">`,
+    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"${mstts} xml:lang="${escapeXml(language)}">`,
     voiceBlocks,
     `</speak>`,
   ].join('');
@@ -257,6 +262,22 @@ function escapeXml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+function renderPause(value: number | undefined): string {
+  if (value === undefined || value === 0) return '';
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0 || value > 10_000) {
+    throw new Error(`pauseAfterMs must be an integer between 0 and 10000; received ${String(value)}.`);
+  }
+
+  return `<break time="${value}ms"/>`;
+}
+
+function formatStyleDegree(value: number): string {
+  if (!Number.isFinite(value) || value < 0.01 || value > 2) {
+    throw new Error(`styleDegree must be between 0.01 and 2; received ${String(value)}.`);
+  }
+  return String(value);
 }
 
 /**
@@ -301,29 +322,114 @@ export function renderUtteranceText(text: string, scriptLanguage: string): strin
   return parts.join('');
 }
 
+interface SpeechRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs: number;
+  maxRetries: number;
+  retryDelayMs: number;
+}
+
+async function synthesizeSsmlWithRetry(
+  config: sdk.SpeechConfig,
+  ssml: string,
+  opts: SpeechRequestOptions
+): Promise<{ bytes: Buffer; durationMs: number }> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= opts.maxRetries; attempt++) {
+    opts.signal?.throwIfAborted();
+    try {
+      return await synthesizeSsml(config, ssml, opts);
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      lastError = normalized;
+      if (attempt >= opts.maxRetries || !isTransientSpeechError(normalized)) throw normalized;
+      await abortableDelay(opts.retryDelayMs * 2 ** attempt, opts.signal);
+    }
+  }
+  throw lastError ?? new Error('Azure Speech synthesis failed without an error.');
+}
+
 function synthesizeSsml(
   config: sdk.SpeechConfig,
-  ssml: string
+  ssml: string,
+  opts: SpeechRequestOptions
 ): Promise<{ bytes: Buffer; durationMs: number }> {
   return new Promise((resolveP, rejectP) => {
     const synthesizer = new sdk.SpeechSynthesizer(config, undefined);
+    let settled = false;
+    const finish = (
+      callback: () => void
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      opts.signal?.removeEventListener('abort', onAbort);
+      synthesizer.close();
+      callback();
+    };
+    const onAbort = () => {
+      const reason =
+        opts.signal?.reason instanceof Error
+          ? opts.signal.reason
+          : new DOMException('Azure Speech synthesis aborted.', 'AbortError');
+      finish(() => rejectP(reason));
+    };
+    const timeout = setTimeout(() => {
+      finish(() =>
+        rejectP(new Error(`Azure Speech synthesis timed out after ${opts.timeoutMs}ms.`))
+      );
+    }, opts.timeoutMs);
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+    if (opts.signal?.aborted) {
+      onAbort();
+      return;
+    }
     synthesizer.speakSsmlAsync(
       ssml,
       (result) => {
-        synthesizer.close();
         if (result.reason !== sdk.ResultReason.SynthesizingAudioCompleted) {
-          rejectP(new Error(`Azure Speech synthesis failed: ${result.errorDetails ?? result.reason}`));
+          finish(() =>
+            rejectP(
+              new Error(`Azure Speech synthesis failed: ${result.errorDetails ?? result.reason}`)
+            )
+          );
           return;
         }
         const audio = Buffer.from(result.audioData);
         // audioDuration is in 100-nanosecond ticks; convert to milliseconds.
         const durationMs = Number(result.audioDuration) / 10_000;
-        resolveP({ bytes: audio, durationMs });
+        finish(() => resolveP({ bytes: audio, durationMs }));
       },
       (err) => {
-        synthesizer.close();
-        rejectP(new Error(`Azure Speech synthesis error: ${err}`));
+        finish(() => rejectP(new Error(`Azure Speech synthesis error: ${err}`)));
       }
     );
+  });
+}
+
+function isTransientSpeechError(error: Error): boolean {
+  return /429|throttl|timeout|timed out|temporar|connection|network|service unavailable|\b5\d\d\b/i.test(
+    error.message
+  );
+}
+
+function abortableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+      reject(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new DOMException('Azure Speech retry aborted.', 'AbortError')
+      );
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }

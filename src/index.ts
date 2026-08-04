@@ -1,8 +1,9 @@
 export * from './types.js';
 export { loadConfig, defineConfig } from './config.js';
 export type { Config } from './config.js';
-export { runPipeline } from './pipeline.js';
+export { runPipeline, PipelineItemError } from './pipeline.js';
 export type { RunOptions, RunOverrides } from './pipeline.js';
+export { normalizeLanguageCodes } from './validation.js';
 
 // Auth surface — let consumers pick credential / apiKey / default mode.
 export type { LectoriaAuth } from './azure-auth.js';
@@ -26,7 +27,16 @@ export type { RssDistributorOptions } from './distribute/index.js';
 
 // Stage primitives so library consumers can compose sub-pipelines.
 export { ingest, LocalFileSystemIngest } from './ingest/index.js';
-export { parse, PdfParser, DocxParser, MarkdownParser, HtmlParser } from './parse/index.js';
+export {
+  parse,
+  defaultParsers,
+  PdfParser,
+  DocxParser,
+  MarkdownParser,
+  HtmlParser,
+  TextParser,
+} from './parse/index.js';
+export type { ParseOptions } from './parse/index.js';
 export { translateToAll } from './translate/index.js';
 
 // Glossary helpers — apply project-specific terms outside the pipeline
@@ -54,3 +64,19 @@ export type {
   LanguageEstimate,
   PricingTable,
 } from './estimate.js';
+export {
+  DEFAULT_COST_POLICY,
+  CostLimitExceededError,
+  CostApprovalRequiredError,
+  CostApprovalDeclinedError,
+  createCostAssessment,
+  enforceCostPolicy,
+  formatCostAssessment,
+  resolveCostPolicy,
+} from './cost-policy.js';
+export type {
+  CostAssessment,
+  CostAwarenessMode,
+  CostPolicy,
+  ResolvedCostPolicy,
+} from './cost-policy.js';

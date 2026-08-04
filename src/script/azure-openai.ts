@@ -30,6 +30,12 @@ import {
 } from './prompts.js';
 import { applyGlossaryToScript } from './glossary.js';
 import { renderGlossaryForPrompt } from './glossary.js';
+import { createScriptId } from '../identity.js';
+import {
+  ModelOutputValidationError,
+  parseModelScript,
+  type ParsedModelScript,
+} from './schema.js';
 
 export interface AzureOpenAIScriptModelOptions {
   endpoint: string;
@@ -51,6 +57,10 @@ export interface AzureOpenAIScriptModelOptions {
    * section / segment so consumers can drive a progress bar.
    */
   onProgress?: ProgressListener;
+  /** Per-request deadline in milliseconds. Defaults to 120 seconds. */
+  timeoutMs?: number;
+  /** SDK retries for transport and throttling failures. Defaults to 3. */
+  maxRetries?: number;
 }
 
 export class AzureOpenAIScriptModel implements ScriptModel {
@@ -107,25 +117,16 @@ export class AzureOpenAIScriptModel implements ScriptModel {
   ): Promise<PodcastScript> {
     const { systemPrompt, userPrompt, temperature } = selectScriptPrompt(doc, opts);
 
-    const response = await this.#client.chat.completions.create(
-      {
-        model: this.#deployment,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature,
-      },
-      { signal: opts.signal }
-    );
-
-    const raw = response.choices[0]?.message?.content;
-    if (!raw) throw new Error('Azure OpenAI returned empty script content.');
-
-    const parsed = parseScriptJson(raw);
+    const parsed = await this.#requestParsedScript({
+      systemPrompt,
+      userPrompt,
+      temperature,
+      signal: opts.signal,
+      allowedSpeakers: speakersForStyle(opts.style),
+    });
     return {
-      id: `${doc.id}-${opts.targetLanguage}`,
+      id: createScriptId(doc.id, opts.targetLanguage),
+      documentId: doc.id,
       language: opts.targetLanguage,
       episodeTitle: parsed.episodeTitle,
       summary: parsed.summary,
@@ -177,7 +178,8 @@ export class AzureOpenAIScriptModel implements ScriptModel {
     }
 
     return {
-      id: `${doc.id}-${opts.targetLanguage}`,
+      id: createScriptId(doc.id, opts.targetLanguage),
+      documentId: doc.id,
       language: opts.targetLanguage,
       episodeTitle: episodeTitle ?? doc.title,
       summary: summary ?? '',
@@ -208,25 +210,16 @@ export class AzureOpenAIScriptModel implements ScriptModel {
       ? `${glossaryBlock}\n\nInput script JSON follows. Return the translated script as STRICT JSON.\n\n${payload}`
       : payload;
 
-    const response = await this.#client.chat.completions.create(
-      {
-        model: this.#deployment,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ],
-        temperature: verbatim ? 0.2 : 0.3,
-      },
-      { signal: opts.signal }
-    );
-
-    const raw = response.choices[0]?.message?.content;
-    if (!raw) throw new Error('Azure OpenAI returned empty translation content.');
-
-    const parsed = parseScriptJson(raw);
+    const parsed = await this.#requestParsedScript({
+      systemPrompt,
+      userPrompt: userContent,
+      temperature: verbatim ? 0.2 : 0.3,
+      signal: opts.signal,
+      allowedSpeakers: speakersInScript(script),
+    });
     return {
-      id: `${script.id.replace(/-[^-]+$/, '')}-${targetLanguage}`,
+      id: createScriptId(script.documentId, targetLanguage),
+      documentId: script.documentId,
       language: targetLanguage,
       episodeTitle: parsed.episodeTitle,
       summary: parsed.summary,
@@ -278,13 +271,79 @@ export class AzureOpenAIScriptModel implements ScriptModel {
     }
 
     return {
-      id: `${script.id.replace(/-[^-]+$/, '')}-${targetLanguage}`,
+      id: createScriptId(script.documentId, targetLanguage),
+      documentId: script.documentId,
       language: targetLanguage,
       episodeTitle: episodeTitle ?? script.episodeTitle,
       summary: summary ?? script.summary,
       segments: translatedSegments,
       style: script.style,
     };
+  }
+
+  async #requestParsedScript(input: {
+    systemPrompt: string;
+    userPrompt: string;
+    temperature: number;
+    signal?: AbortSignal;
+    allowedSpeakers: ReadonlySet<string>;
+  }): Promise<ParsedModelScript> {
+    const first = await this.#requestJson(input.systemPrompt, input.userPrompt, input.temperature, input.signal);
+    try {
+      return parseModelScript(first, input.allowedSpeakers);
+    } catch (error) {
+      if (!(error instanceof ModelOutputValidationError)) throw error;
+      this.#logger.warn(
+        `[model] invalid structured output; requesting one repair (${formatValidationIssues(error)})`
+      );
+      const repairPrompt = [
+        'Correct the previous response so it matches the requested JSON schema.',
+        'Return JSON only. Do not add fields or prose.',
+        `Validation issues: ${formatValidationIssues(error)}`,
+        'Previous response:',
+        first,
+      ].join('\n');
+      const repaired = await this.#requestJson(
+        input.systemPrompt,
+        repairPrompt,
+        Math.min(input.temperature, 0.2),
+        input.signal
+      );
+      try {
+        return parseModelScript(repaired, input.allowedSpeakers);
+      } catch (repairError) {
+        if (repairError instanceof ModelOutputValidationError) {
+          throw new Error(
+            `Azure OpenAI returned invalid script JSON after one repair attempt: ${formatValidationIssues(repairError)}`,
+            { cause: repairError }
+          );
+        }
+        throw repairError;
+      }
+    }
+  }
+
+  async #requestJson(
+    systemPrompt: string,
+    userPrompt: string,
+    temperature: number,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const response = await this.#client.chat.completions.create(
+      {
+        model: this.#deployment,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature,
+      },
+      { signal }
+    );
+    const raw = response.choices[0]?.message?.content;
+    if (!raw) throw new Error('Azure OpenAI returned empty script content.');
+    return raw;
   }
 }
 
@@ -296,7 +355,8 @@ function createOpenAIClient(
     endpoint: opts.endpoint,
     apiVersion: opts.apiVersion,
     deployment: opts.deployment,
-    maxRetries: 5,
+    maxRetries: opts.maxRetries ?? 3,
+    timeout: opts.timeoutMs ?? 120_000,
   };
   if (auth.kind === 'apiKey') {
     return new AzureOpenAI({ ...base, apiKey: auth.apiKey });
@@ -304,12 +364,6 @@ function createOpenAIClient(
   const credential = resolveCredential(auth);
   const azureADTokenProvider = getBearerTokenProvider(credential, COGNITIVE_SERVICES_SCOPE);
   return new AzureOpenAI({ ...base, azureADTokenProvider });
-}
-
-interface ParsedScript {
-  episodeTitle: string;
-  summary: string;
-  segments: PodcastSegment[];
 }
 
 interface PromptSelection {
@@ -358,32 +412,18 @@ function selectScriptPrompt(
   }
 }
 
-function parseScriptJson(raw: string): ParsedScript {
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Model did not return valid JSON: ${(err as Error).message}\n---\n${raw}`);
-  }
-  if (typeof json !== 'object' || json === null) {
-    throw new Error('Model JSON output was not an object.');
-  }
-  const obj = json as Record<string, unknown>;
+function speakersForStyle(style: ScriptStyle): ReadonlySet<string> {
+  return new Set(style.kind === 'dialogue' ? style.speakers.map((speaker) => speaker.id) : ['host']);
+}
 
-  // The model may nest the script under a "script" key (especially for translations
-  // where the input shape wraps content in { script: { ... } }).
-  const source =
-    typeof obj.script === 'object' && obj.script !== null && 'segments' in obj.script
-      ? (obj.script as Record<string, unknown>)
-      : obj;
-
-  const segments = Array.isArray(source.segments) ? (source.segments as PodcastSegment[]) : [];
-  if (segments.length === 0) {
-    throw new Error(`Model returned zero segments. Raw output:\n${raw.slice(0, 500)}`);
+function speakersInScript(script: PodcastScript): ReadonlySet<string> {
+  const speakers = new Set<string>();
+  for (const segment of script.segments) {
+    for (const utterance of segment.utterances) speakers.add(utterance.voice ?? 'host');
   }
-  return {
-    episodeTitle: String(source.episodeTitle ?? 'Untitled episode'),
-    summary: String(source.summary ?? ''),
-    segments,
-  };
+  return speakers.size > 0 ? speakers : new Set(['host']);
+}
+
+function formatValidationIssues(error: ModelOutputValidationError): string {
+  return error.issues.length > 0 ? error.issues.join('; ') : error.message;
 }

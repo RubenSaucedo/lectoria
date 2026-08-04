@@ -1,21 +1,29 @@
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
-import { visit } from 'unist-util-visit';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Document, DocumentParser, DocumentSection, SourceFile } from '../types.js';
+import type {
+  Document,
+  DocumentParser,
+  DocumentSection,
+  ParserOptions,
+  SourceFile,
+} from '../types.js';
+import { ensureContent, resolveSourceLanguage } from './content.js';
 
 interface MdNode {
   type: string;
   depth?: number;
   value?: string;
+  alt?: string;
+  lang?: string;
   children?: MdNode[];
 }
 
 export class MarkdownParser implements DocumentParser {
   readonly format = 'md' as const;
 
-  async parse(file: SourceFile): Promise<Document> {
+  async parse(file: SourceFile, opts: ParserOptions = {}): Promise<Document> {
     const text = file.bytes.toString('utf-8');
     const tree = unified().use(remarkParse).parse(text) as unknown as MdNode;
 
@@ -23,27 +31,29 @@ export class MarkdownParser implements DocumentParser {
     let current: DocumentSection = { paragraphs: [] };
     let detectedTitle: string | undefined;
 
-    visit(tree as never, (node: MdNode) => {
+    for (const node of tree.children ?? []) {
       if (node.type === 'heading') {
         const heading = nodeText(node);
         if (!detectedTitle && node.depth === 1) {
           detectedTitle = heading;
-          return;
+          continue;
         }
         if (current.paragraphs.length || current.heading) sections.push(current);
         current = { heading, paragraphs: [] };
-      } else if (node.type === 'paragraph') {
-        const para = nodeText(node);
-        if (para) current.paragraphs.push(para);
+        continue;
       }
-    });
+      const block = markdownBlockText(node);
+      if (block) current.paragraphs.push(block);
+    }
     if (current.paragraphs.length || current.heading) sections.push(current);
+    const normalized = ensureContent(sections, file.uri);
 
     return {
       id: file.id,
+      contentHash: file.contentHash,
       title: detectedTitle ?? filenameOf(file.uri),
-      language: 'en',
-      sections: sections.length ? sections : [{ paragraphs: [text.trim()] }],
+      language: resolveSourceLanguage(text, opts.sourceLanguage),
+      sections: normalized,
       sourcePath: file.sourcePath,
       metadata: {
         sourceUri: file.uri,
@@ -56,8 +66,25 @@ export class MarkdownParser implements DocumentParser {
 
 function nodeText(node: MdNode): string {
   if (typeof node.value === 'string') return node.value;
+  if (node.type === 'image' && node.alt) return node.alt;
   if (!node.children) return '';
-  return node.children.map(nodeText).join('').trim();
+  return node.children.map(nodeText).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function markdownBlockText(node: MdNode): string {
+  if (node.type === 'code') {
+    const language = node.lang ? ` (${node.lang})` : '';
+    return `Code${language}:\n${node.value?.trim() ?? ''}`;
+  }
+  if (node.type === 'list') {
+    return (node.children ?? [])
+      .map((item) => `- ${nodeText(item)}`)
+      .filter((item) => item !== '- ')
+      .join('\n');
+  }
+  if (node.type === 'blockquote') return `Quote: ${nodeText(node)}`;
+  if (node.type === 'html') return node.value?.trim() ?? '';
+  return nodeText(node);
 }
 
 function filenameOf(uri: string): string {

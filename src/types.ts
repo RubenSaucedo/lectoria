@@ -16,8 +16,10 @@ export type LanguageCode = 'en' | 'es' | (string & {});
 export type SourceFormat = 'pdf' | 'docx' | 'md' | 'html' | 'txt';
 
 export interface SourceFile {
-  /** Stable identifier derived from the source URI + content hash. */
+  /** Stable identifier derived from the logical source URI. */
   id: string;
+  /** SHA-256 of the fetched bytes; changes when the source revision changes. */
+  contentHash: string;
   /** Absolute path or URL the bytes came from. */
   uri: string;
   /** Detected format used to pick a parser. */
@@ -47,6 +49,8 @@ export interface DocumentSection {
 
 export interface Document {
   id: string;
+  /** Content revision inherited from SourceFile. */
+  contentHash: string;
   title: string;
   /** Best-guess source language. Translation stage will target other languages. */
   language: LanguageCode;
@@ -87,8 +91,10 @@ export interface PodcastSegment {
 }
 
 export interface PodcastScript {
-  /** Stable id, typically `${document.id}-${language}`. */
+  /** Stable script identity. Do not parse document or language values from it. */
   id: string;
+  /** Explicit source-document identity retained across translations. */
+  documentId: string;
   episodeTitle: string;
   language: LanguageCode;
   summary: string;
@@ -124,6 +130,8 @@ export interface Episode {
   description: string;
   audioPath: string;
   audioSizeBytes: number;
+  /** SHA-256 of the finalized, tagged audio file. */
+  audioSha256: string;
   durationSec: number;
   chapters: Chapter[];
   publishedAt: string;
@@ -140,7 +148,12 @@ export interface IngestSource {
 
 export interface DocumentParser {
   format: SourceFormat;
-  parse(file: SourceFile): Promise<Document>;
+  parse(file: SourceFile, opts?: ParserOptions): Promise<Document>;
+}
+
+export interface ParserOptions {
+  /** Explicit source language when automatic detection is ambiguous. */
+  sourceLanguage?: LanguageCode;
 }
 
 export interface DialogueSpeaker {
@@ -309,6 +322,14 @@ export interface Distributor {
 export type ProgressEvent =
   | { phase: 'parse:start'; source: string }
   | { phase: 'parse:complete'; documentId: string; sections: number }
+  | {
+      phase: 'cost:assessment';
+      documents: number;
+      sourceCharacters: number;
+      estimatedAudioMinutes: number;
+      estimatedUsd: number;
+      warnings: string[];
+    }
   | {
       phase: 'script:start';
       documentId: string;

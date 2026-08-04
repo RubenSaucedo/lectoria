@@ -11,6 +11,7 @@ import type { Glossary, PodcastScript } from '../types.js';
 function script(language: string, text: string): PodcastScript {
   return {
     id: 'fixture',
+    documentId: 'fixture-document',
     language,
     episodeTitle: 'T',
     summary: 'S',

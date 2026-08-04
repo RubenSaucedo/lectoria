@@ -1,7 +1,7 @@
 {
   "name": "lectoria",
-  "version": "0.0.1",
-  "description": "Turn written learning content into multilingual podcast audio (EN + ES to start).",
+  "version": "0.1.0",
+  "description": "Turn learning documents into reliable multilingual lesson and podcast audio with Azure.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -53,21 +53,26 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.test.json",
-    "lint": "eslint . --ext .ts",
+    "lint": "eslint src scripts/*.mjs eslint.config.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:package": "node scripts/package-smoke.mjs",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "validate": "npm run typecheck && npm run lint && npm test && npm run build && npm run test:package && npm run audit:prod",
     "clean": "rimraf dist out/*.mp3 out/*.xml",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "keywords": [
     "podcast",
@@ -96,28 +101,34 @@
   "homepage": "https://github.com/RubenSaucedo/lectoria#readme",
   "dependencies": {
     "@azure/identity": "^4.13.1",
-    "@mozilla/readability": "^0.5.0",
+    "@mozilla/readability": "^0.6.0",
     "commander": "^12.1.0",
     "dotenv": "^16.4.5",
     "jsdom": "^25.0.1",
     "mammoth": "^1.8.0",
-    "microsoft-cognitiveservices-speech-sdk": "^1.40.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
     "node-id3": "^0.2.6",
     "openai": "^4.67.0",
     "pdf-parse": "^1.1.1",
     "podcast": "^2.0.1",
+    "proper-lockfile": "^4.1.2",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.0.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22.7.4",
     "@types/pdf-parse": "^1.1.4",
+    "@types/proper-lockfile": "^4.1.4",
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
-    "vitest": "^2.1.9"
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
   }
 }

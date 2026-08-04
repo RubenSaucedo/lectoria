@@ -7,7 +7,7 @@
 [![CI](https://github.com/RubenSaucedo/lectoria/actions/workflows/ci.yml/badge.svg)](https://github.com/RubenSaucedo/lectoria/actions/workflows/ci.yml)
 
 `lectoria` is a TypeScript CLI + library that takes documents (PDF, DOCX,
-Markdown, HTML) and produces audio episodes in **English and Spanish** —
+Markdown, HTML, plain text) and produces audio episodes in **English and Spanish** —
 as podcast-style shows, natural read-alongs, or near-verbatim narration —
 packaged as MP3s with a standard RSS feed you can publish to Spotify,
 Apple Podcasts, or anywhere else that ingests RSS.
@@ -41,6 +41,7 @@ storage) without rewriting the pipeline.
 
 ```bash
 # 1. Install
+# Requires Node.js 22.13 or newer.
 npm install
 
 # 2. Configure (copy then edit)
@@ -53,11 +54,10 @@ cp ~/Downloads/some-course.pdf samples/
 npx tsx src/cli.ts run samples/some-course.pdf --lang en,es --out ./out
 ```
 
-You'll get `out/some-course/some-course-en.mp3`,
-`out/some-course/some-course-es.mp3`, plus `out/some-course/feed.xml` and
-`out/some-course/episodes.json` next to them. Every folder that ends up
-containing audio gets its own podcast feed — see [Output layout](#output-layout)
-for the multi-podcast model.
+You'll get `out/some-course/some-course-en.mp3` and
+`out/some-course/some-course-es.mp3`. Set `LECTORIA_AUDIO_BASE_URL` to the
+public URL that will host `out/` when you also want `feed.xml` and
+`episodes.json`. Lectoria does not emit placeholder RSS URLs.
 
 ## Provisioning Azure resources
 
@@ -143,6 +143,7 @@ catalog. Required for v0:
 | `LECTORIA_VOICE_EN`        | (optional) Override the English host voice id                 |
 | `LECTORIA_VOICE_ES`        | (optional) Override the Spanish host voice id                 |
 | `LECTORIA_GLOSSARY_FILE`   | (optional) Path to a JSON glossary. See [Glossaries](#glossaries-english-pronunciation-across-translations). |
+| `LECTORIA_AUDIO_BASE_URL`  | (optional) Public root URL for the output tree. Enables RSS generation. |
 
 ### Auth: Microsoft Entra ID (no API keys)
 
@@ -186,7 +187,8 @@ lectoria run <source>          Run the full pipeline on a file or folder.
   --out <dir>                  Output directory (default: ./out).
   --style <style>              podcast | conversational | verbatim | dialogue
                                (default: conversational).
-  --voice <preset>             Voice preset: espana | latino | intermedio.
+  --voice <preset>             Voice preset: espana | latino | intermedio |
+                               intermedio-femenino.
                                Sets host/guest voices + pace per language.
                                Default: espana. Overrides LECTORIA_VOICE_PRESET.
   --speakers <list>            Dialogue cast as id:Name pairs (only with
@@ -201,6 +203,17 @@ lectoria run <source>          Run the full pipeline on a file or folder.
                                top level instead of walking subdirectories.
   --no-distribute              Skip RSS feed + episodes.json generation.
                                Produce audio files only.
+  --source-lang <code>         Explicit source language when detection is ambiguous.
+  --no-resume                  Ignore checkpoints and repeat every stage.
+  --continue-on-error          Continue a folder run after one source fails;
+                               exits nonzero if any source failed.
+  --checkpoint-dir <dir>       Override the checkpoint directory.
+  --cost-awareness <mode>      off | warn | require-approval (default: warn).
+  --warn-above-usd <amount>    Override the default $1 warning threshold.
+  --warn-above-chars <count>   Override the default 50,000-character threshold.
+  --warn-above-minutes <n>     Override the default 30-minute audio threshold.
+  --max-estimated-usd <amount> Hard ceiling; stop before Azure calls.
+  -y, --yes                    Approve a cost warning non-interactively.
 
 lectoria parse <source>        Parse a doc and print the normalized Document JSON.
 lectoria voices                List the available voice presets.
@@ -219,6 +232,7 @@ narrator's whole character with one flag. Pick one with `--voice <preset>` (or
 | `espana`      | `es-ES-AlvaroNeural` (rate −6%)  | **Default.** Warm, measured, peninsular-Castilian — clear didactic narration for book summaries / study content. |
 | `latino`      | `es-MX-JorgeNeural` (rate +5%)   | The same measured read in neutral Latin-American Spanish.   |
 | `intermedio`  | `es-ES-TristanMultilingualNeural` (rate −4%) | "In between" Castilian and Latin-American — a less regionally-marked, international feel. |
+| `intermedio-femenino` | `es-ES-XimenaMultilingualNeural` (rate −4%) | Female counterpart to `intermedio`, with the same measured, broadly international delivery. |
 
 ```bash
 # Use the default (espana):
@@ -268,10 +282,16 @@ out/courses/
     └── intro-en.mp3
 ```
 
-A single-file input gets the same shape: `lectoria run lesson.md` lands
-at `out/lesson/lesson-en.mp3` with `out/lesson/feed.xml` next to it.
-Pass `--no-distribute` to skip the feeds and produce audio only, or
-`--no-recursive` to scan only the top level of a folder.
+A single-file input lands at `out/lesson/lesson-en.mp3`. When
+`LECTORIA_AUDIO_BASE_URL` is configured, `feed.xml` is written next to it.
+Pass `--no-distribute` to force audio-only output, or `--no-recursive` to
+scan only the top level of a folder.
+
+Inputs with the same stem, such as `lesson.md` and `lesson.txt`, are
+disambiguated with format and identity suffixes before any Azure call.
+All final audio, RSS, index, and checkpoint writes use temporary files and
+atomic replacement so an interrupted run does not replace a valid output
+with a partial file.
 
 ### Script styles
 
@@ -329,22 +349,24 @@ Notes:
 
 ### Long documents and Azure OpenAI TPM (429s)
 
-For `conversational`, `verbatim`, and `dialogue` styles, lectoria generates
-the script **one source section per API call** instead of one giant request. This
+For `conversational`, `verbatim`, and `dialogue` styles, lectoria currently
+generates the script **one source section per API call** instead of one giant request. This
 matches what those prompts already promise ("each source section maps to
 one body segment") and is the only reliable way around Azure OpenAI's
 per-minute token cap (TPM). A 12k-token document that exceeds your
 deployment's TPM in a single request will keep 429-ing no matter how
 long you wait — the cap is per-minute, so each retry trips the same
-ceiling. Splitting the work into ~1k-token chunks fixes that.
+ceiling when the parser found multiple reasonably sized sections.
 
 Translation works the same way: scripts with more than one segment are
 translated one segment at a time.
 
 Progress is printed to stderr (`[script] section 3/47 ✓`) so you can see
-the run advance. The `podcast` style still uses a single call because its
-prompt produces one host show (welcome / chapters / outro) that doesn't
-decompose section-by-section.
+the run advance. The `podcast` style and documents that parse into one very large section can
+still produce a large request. Cost-aware preflight reports the expected
+size, duration, and Azure spend before paid calls; size-based request
+chunking remains separate rather than being hidden behind an unreliable
+heuristic.
 
 Example:
 
@@ -486,8 +508,8 @@ const defaultModel = new AzureOpenAIScriptModel({
 
 ### Adapter overrides
 
-Every pipeline stage is behind a typed interface (`ScriptModel`,
-`TtsProvider`, `Packager`, `Distributor`). Pass your own implementation
+Every pipeline stage is behind a typed interface (`IngestSource`,
+`DocumentParser`, `ScriptModel`, `TtsProvider`, `Packager`, `Distributor`). Pass your own implementation
 for any subset; the rest fall back to the default Azure-backed adapters:
 
 ```ts
@@ -501,9 +523,38 @@ const myModel: ScriptModel = {
 await runPipeline(
   defineConfig({ /* ... */ }),
   { source: './doc.md', targetLanguages: ['en'] },
-  { scriptModel: myModel }, // tts/packager/distributor still default
+  { scriptModel: myModel }, // ingest/parsers/tts/packager/distributor still default
 );
 ```
+
+When custom script, TTS, or packaging adapters are used, checkpoint reuse is
+disabled unless the run supplies a versioned `checkpointKey`. This prevents
+stale output from one adapter implementation being reused by another.
+
+### Resumable and batch-safe runs
+
+Identical default-adapter runs automatically reuse content-addressed
+checkpoints under `out/.lectoria-cache`. Generated scripts, translations,
+raw Speech audio, and completed episode metadata are cached independently,
+so a packaging or feed failure does not repeat paid Azure stages.
+Concurrent identical runs lock the shared checkpoint through paid stages, so
+only one run generates each script and audio file.
+
+```ts
+await runPipeline(config, {
+  source: './course',
+  checkpointDir: './.cache/lectoria',
+  continueOnError: true,
+  onItemError: (error) => {
+    console.error(error.sourceUri, error.stage, error.message);
+  },
+});
+```
+
+Set `resume: false` for a clean rerun. Folder runs remain fail-fast by
+default; `continueOnError` makes failures source-local and reports them
+through `onItemError`. The CLI still exits nonzero when any source fails, so
+batch automation does not mistake a partial run for success.
 
 ### Logging and cancellation
 
@@ -528,7 +579,7 @@ await runPipeline(config, {
 For programmatic consumers — a progress bar, a UI, a telemetry pipe — pass
 `onProgress` instead of (or alongside) `logger`. You get structured events
 per stage: `parse:start`, `script:section`, `translate:segment`,
-`tts:segment`, `episode:complete`, `run:complete`:
+`cost:assessment`, `tts:segment`, `episode:complete`, `run:complete`:
 
 ```ts
 import { runPipeline } from 'lectoria';
@@ -555,6 +606,20 @@ Each event is a discriminated union — TypeScript narrows on `event.phase`,
 so the IDE shows you what other fields each variant carries (segment counts,
 language, durations, etc.).
 
+### Privacy and Azure data boundary
+
+Lectoria sends parsed source text to the configured Azure OpenAI deployment
+to generate and translate scripts. Generated utterance text is then sent to
+the configured Azure AI Speech resource. The library does not send documents
+to any other provider, but Azure tenant, region, logging, abuse-monitoring,
+and retention settings still apply.
+
+Do not process confidential, regulated, or personal material until you have
+reviewed the policies and configuration of the Azure resources you selected.
+Local checkpoints contain generated scripts and raw audio derived from the
+source, so protect or disable the checkpoint directory when the input is
+sensitive. Validation errors never include complete model responses.
+
 ### Estimating cost before a run
 
 `estimateCost()` previews the API spend of a run without calling Azure.
@@ -578,6 +643,55 @@ for (const lang of est.languages) {
 // Always show the assumptions next to the dollar figure:
 for (const note of est.assumptions) console.log(`  ⓘ ${note}`);
 ```
+
+### Cost-aware pipeline preflight
+
+Built-in Azure runs perform the same local estimate automatically after
+parsing and before script generation. The default policy is soft-warning
+mode:
+
+- estimated aggregate cost at or above **$1**
+- parsed source size at or above **50,000 characters**
+- estimated aggregate audio at or above **30 minutes**
+
+No Azure request is made to calculate the estimate. CLI warnings are written
+to stderr. Library callers can receive every assessment through
+`onCostAssessment` or the `cost:assessment` progress event.
+On resumed runs, valid script, audio, and completed-episode checkpoints are
+excluded so approvals and hard caps cover only paid work that remains.
+
+```ts
+await runPipeline(config, {
+  source: './course',
+  costPolicy: {
+    mode: 'warn',
+    warnAboveUsd: 0.5,
+    maxEstimatedUsd: 5,
+  },
+  onCostAssessment: (assessment) => {
+    console.log(assessment.totals, assessment.warnings);
+  },
+});
+```
+
+`maxEstimatedUsd` is a hard guardrail and stops the run before model or
+Speech calls. For explicit approval:
+
+```bash
+# Interactive prompt only when a warning threshold is reached.
+lectoria run course/ --cost-awareness require-approval
+
+# CI/noninteractive approval.
+lectoria run course/ --cost-awareness require-approval --yes
+```
+
+Noninteractive approval fails closed unless `--yes` is supplied. Programmatic
+callers use `costPolicy.approve`. Pass `costPolicy: false` or
+`--cost-awareness off` to disable estimation.
+
+Cost awareness defaults off when custom script or TTS adapters are supplied,
+because Azure pricing would be misleading. Custom-adapter callers can opt in
+explicitly and provide `costPolicy.pricing`.
 
 The numbers are **rough heuristics**, not a quote — token counts are
 approximated as chars/4, output expansion is a per-style multiplier, and
@@ -666,12 +780,12 @@ src/
 
 ## Roadmap
 
-- **v0 (this scaffold)** — local FS ingest, all stage interfaces, Azure
-  Speech + Azure OpenAI adapters stubbed, local MP3 + RSS output.
-- **v1** — full parser implementations, OneDrive ingest (Microsoft Graph),
-  Azure Blob upload for hosted RSS.
-- **v2** — watch mode, multi-voice dialog scripts, optional ElevenLabs
-  adapter, optional thin Copilot CLI plugin wrapper.
+- **0.1 reliability beta** — Azure OpenAI + Speech pipeline, resumable paid
+  stages, strict provider contracts, safe MP3/RSS output, and typed adapters.
+- **Before 1.0** — size-based request chunking for single huge sections and
+  podcast-style generation.
+- **Later** — transcript export for accessibility and review, stronger
+  multilingual quality evaluations, and optional Azure-hosted publishing.
 
 ## Contributing
 
@@ -694,7 +808,7 @@ Tests are co-located as `src/**/*.test.ts` and powered by
 Azure script + TTS adapters so you can run the full orchestrator
 end-to-end without spending a cent.
 
-CI runs on every push and pull request against `main` (Node 20 + 22).
+CI runs on every push and pull request against `main` (Node 22 + 24).
 See [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
 
 ## License

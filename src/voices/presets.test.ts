@@ -40,6 +40,13 @@ describe('resolveVoicePreset', () => {
     });
   });
 
+  it('ships intermedio-femenino as the measured multilingual female counterpart', () => {
+    expect(VOICE_PRESETS['intermedio-femenino'].host.es).toMatchObject({
+      name: 'es-ES-XimenaMultilingualNeural',
+      rate: '-4%',
+    });
+  });
+
   it('every preset voice avoids express-as styles (unsupported styles error the run)', () => {
     for (const map of Object.values(VOICE_PRESETS)) {
       for (const byLang of Object.values(map)) {

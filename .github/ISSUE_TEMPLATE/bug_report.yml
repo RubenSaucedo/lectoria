@@ -1,0 +1,90 @@
+name: Bug report
+description: Report incorrect or unreliable behavior.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This issue will be public and is indexed by search engines.**
+
+        Lectoria runs against your own Azure resources and your own documents,
+        so its logs and errors can contain private material. Before you paste
+        anything, remove:
+
+        - API keys, access tokens, and connection strings
+        - Azure subscription IDs, resource IDs, and endpoint host names
+        - The contents of your source documents and generated scripts
+        - Any published feed URL you do not want made public
+
+        Replace them with placeholders such as `<subscription-id>`. If the bug
+        can only be shown with sensitive data, report it privately through
+        [Security Advisories](https://github.com/RubenSaucedo/lectoria/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The command or `runPipeline` call you ran, with secrets redacted.
+        A minimal non-sensitive source document is far more useful than a real one.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output
+      description: Redacted error message or stack trace.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Lectoria version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version` (Lectoria requires 22.13 or newer).
+      placeholder: "v22.13.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage failed
+      options:
+        - Ingest or parsing
+        - Script generation or translation (Azure OpenAI)
+        - Speech synthesis (Azure AI Speech)
+        - Packaging or MP3 output
+        - RSS feed or episode index
+        - Checkpoint, resume, or cost preflight
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed all credentials, Azure identifiers, and private document content from this report.
+          required: true
+        - label: This is not a security vulnerability. (Those go through Security Advisories.)
+          required: true

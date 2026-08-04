@@ -1,21 +1,23 @@
 import pdfParse from 'pdf-parse';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Document, DocumentParser, SourceFile } from '../types.js';
+import type { Document, DocumentParser, ParserOptions, SourceFile } from '../types.js';
+import { ensureContent, resolveSourceLanguage, sectionsFromPlainText } from './content.js';
 
 export class PdfParser implements DocumentParser {
   readonly format = 'pdf' as const;
 
-  async parse(file: SourceFile): Promise<Document> {
+  async parse(file: SourceFile, opts: ParserOptions = {}): Promise<Document> {
     const result = await pdfParse(file.bytes);
     const text: string = result.text ?? '';
-    const sections = splitIntoSections(text);
+    const sections = ensureContent(sectionsFromPlainText(text), file.uri);
     const title = (result.info?.Title as string | undefined)?.trim() || filenameOf(file.uri);
 
     return {
       id: file.id,
+      contentHash: file.contentHash,
       title,
-      language: 'en',
+      language: resolveSourceLanguage(text, opts.sourceLanguage),
       sections,
       sourcePath: file.sourcePath,
       metadata: {
@@ -26,15 +28,6 @@ export class PdfParser implements DocumentParser {
       },
     };
   }
-}
-
-function splitIntoSections(text: string) {
-  const paragraphs = text
-    .split(/\n{2,}/)
-    .map((p) => p.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
-  // TODO: detect headings (font size, ALL CAPS, numbered) to build real sections.
-  return [{ paragraphs }];
 }
 
 function filenameOf(uri: string): string {

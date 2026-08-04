@@ -34,6 +34,12 @@ language at the script stage and emitting `ProgressEvent`s along the way.
 Each stage is a small interface in `src/types.ts`; the orchestrator never
 touches a provider SDK directly.
 
+After parsing and output-collision planning, built-in Azure runs perform a
+local cost assessment before the first paid call. The policy can warn, apply
+a hard USD ceiling, or require caller approval. It is a cross-cutting
+preflight rather than an eighth provider stage. Valid checkpoints are
+inspected first and removed from the remaining-work estimate.
+
 ## Stage reference
 
 | # | Stage          | Input          | Output            | Default adapter              | Lives in           |
@@ -60,10 +66,11 @@ slots in without changing the orchestrator.
 
 ### 2. parse
 
-Routes the `SourceFile` to the parser matching its `format`. Each parser
-emits a normalized `Document` with `title`, `language`, and a list of
-sections (each holding paragraphs). Markdown and HTML parsers preserve
-heading hierarchy so the script stage can chunk by section.
+Routes the `SourceFile` to the parser matching its `format`. Each parser emits a normalized `Document` with `title`, detected or
+explicit source `language`, and a list of sections. Markdown, HTML, and
+DOCX preserve narratable lists, code, tables, image alt text, and headings
+where the source format exposes them. Empty extraction fails before Azure
+calls; scanned PDFs require OCR outside the current parser.
 
 ### 3. script
 
@@ -107,8 +114,9 @@ stays in place at the path the synthesize stage chose.
 
 ### 7. distribute
 
-Optional — controlled by `RunOptions.distribute` (default `true`;
-`--no-distribute` on the CLI). When enabled, the orchestrator instantiates
+Optional — enabled automatically when `config.feed.audioBaseUrl` is set,
+and disabled by `RunOptions.distribute: false` / `--no-distribute`. When
+enabled, the orchestrator instantiates
 one `RssDistributor` per output directory: every folder that ends up
 containing audio files becomes its own podcast feed, with its own
 `feed.xml` and `episodes.json`. Feed titles are derived from the folder
@@ -166,7 +174,11 @@ stage:
   progress bars, telemetry, or any programmatic consumer. Runs alongside
   the logger; pick one or both.
 - **`AbortSignal`** — cancellation. Honored at every stage boundary plus
-  inside the chunked script + TTS loops, so a long run cancels promptly.
+  inside the chunked script + active TTS calls. Speech requests have finite
+  deadlines and transient-only retries.
+- **`CostPolicy`** — local aggregate token/character/audio estimation before
+  paid stages. Defaults to warning mode for built-in Azure adapters; custom
+  script/TTS overrides must opt in with appropriate pricing assumptions.
 - **`LectoriaAuth`** — discriminated union (`credential` / `apiKey` /
   `default`) passed independently to the script model and TTS provider.
   Lets a single host use, e.g., a `ManagedIdentityCredential` for OpenAI
@@ -220,9 +232,11 @@ src/
 
 ## Design choices worth knowing
 
-- **No state machine.** The pipeline runs straight through. Resume and
-  retry are a v1 concern. Failures bubble up so the CLI / host can decide
-  how to handle them.
+- **Content-addressed recovery.** Default-adapter runs checkpoint scripts,
+  translations, raw audio, and episode metadata. Custom paid-stage adapters
+  require a caller-supplied `checkpointKey` before reuse is enabled.
+- **Atomic publication.** Audio is packaged through a temporary sibling;
+  episode indexes and RSS files use atomic replacement plus a lock file.
 - **ESM only.** `"type": "module"` in package.json; subpath imports work
   via the `exports` map.
 - **Adapters know their own auth.** The script model and TTS provider
@@ -231,7 +245,7 @@ src/
 - **Progress is push, not pull.** `onProgress` is a callback rather than
   an async iterator so adapters don't have to coordinate yielding. If
   you want an iterator, build one over the callback.
-- **Chunking is non-optional for long docs.** The script stage forces
-  per-section chunking on `conversational` / `verbatim` / `dialogue`
-  because Azure OpenAI's TPM cap makes "one big request + retry" a
-  guaranteed failure on documents over ~8 k tokens.
+- **Section chunking is not size chunking.** `conversational`, `verbatim`,
+  and `dialogue` use one request per parsed section, but a single huge
+  section and `podcast` mode remain bounded-work design gaps. Cost-aware
+  warnings are implemented; size-based splitting remains deferred.

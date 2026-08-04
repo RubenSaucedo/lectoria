@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Tests for the PDF parser**, which previously had none: text extraction,
+  page count, `/Title` preference over file name, file-name fallback, page
+  separator suppression, and empty-document rejection, against a committed
+  824-byte hand-built PDF fixture.
+
 ### Changed
 
 - **Raised the supported Node.js range to `^22.22.2 || ^24.15.0 || >=26.0.0`.**
@@ -12,8 +19,20 @@ All notable changes to this project are documented in this file.
 - Upgraded `openai` to 7.x and `jsdom` to 30.x. The Azure OpenAI client surface
   used here (the `AzureOpenAI` constructor with `azureADTokenProvider` and
   `chat.completions.create` with `response_format: json_object`) is unchanged.
+- Upgraded `zod` to 4.x. Model-output validation errors keep the same shape;
+  the per-issue messages are slightly reworded by zod itself.
+- Upgraded `pdf-parse` to 2.x and rewrote `PdfParser` for its class-based API.
+  Removed the now-obsolete `@types/pdf-parse`, since v2 ships its own types.
 - Upgraded `actions/checkout` to v7 and `actions/setup-node` to v7, still
   pinned to commit SHAs.
+
+### Fixed
+
+- **PDF text no longer contains `-- N of M --` page separators.** pdf-parse 2
+  inserts them by default; left alone they would have been sent to the model
+  and read aloud in the generated audio.
+- `PdfParser` now releases the pdf.js worker and document on every exit path,
+  so a batch run over many PDFs does not leak one document per file.
 
 ## [0.1.0] - 2026-07-30
 

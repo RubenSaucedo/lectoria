@@ -41,7 +41,7 @@ storage) without rewriting the pipeline.
 
 ```bash
 # 1. Install
-# Requires Node.js 22.13 or newer.
+# Requires Node.js 22.22.2+, 24.15+, or 26+.
 npm install
 
 # 2. Configure (copy then edit)

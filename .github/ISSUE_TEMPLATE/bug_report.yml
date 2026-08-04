@@ -59,8 +59,8 @@ body:
     id: node
     attributes:
       label: Node version
-      description: Output of `node --version` (Lectoria requires 22.13 or newer).
-      placeholder: "v22.13.0"
+      description: Output of `node --version` (Lectoria requires 22.22.2+, 24.15+, or 26+).
+      placeholder: "v22.22.2"
     validations:
       required: true
 

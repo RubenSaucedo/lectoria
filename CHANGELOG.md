@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **Raised the supported Node.js range to `^22.22.2 || ^24.15.0 || >=26.0.0`.**
+  Required by jsdom 30; the previous `>=22.13` floor would have installed a
+  jsdom that does not support the declared range.
+- Upgraded `openai` to 7.x and `jsdom` to 30.x. The Azure OpenAI client surface
+  used here (the `AzureOpenAI` constructor with `azureADTokenProvider` and
+  `chat.completions.create` with `response_format: json_object`) is unchanged.
+- Upgraded `actions/checkout` to v7 and `actions/setup-node` to v7, still
+  pinned to commit SHAs.
+
 ## [0.1.0] - 2026-07-30
 
 ### Added

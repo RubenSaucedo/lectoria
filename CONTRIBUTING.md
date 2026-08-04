@@ -23,6 +23,8 @@ a backstop, not a substitute for checking your own diff.
 ## Development
 
 ```bash
+nvm use          # honors .nvmrc (Node 24); any Node in the supported
+                 # range works — see "engines" in package.json
 npm ci
 npm run validate
 ```

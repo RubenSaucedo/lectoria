@@ -109,7 +109,7 @@
     "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
     "node-id3": "^0.2.6",
     "openai": "^7.4.0",
-    "pdf-parse": "^1.1.1",
+    "pdf-parse": "^2.4.5",
     "podcast": "^2.0.1",
     "proper-lockfile": "^4.1.2",
     "remark-parse": "^11.0.0",

@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest an improvement.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lectoria deliberately stays small: it turns learning documents into
+        reliable lesson and podcast audio using Azure. Requests that broaden
+        that scope, especially additional model or speech providers, need a
+        concrete use case that the current design cannot serve.
+
+        Do not include credentials, Azure identifiers, or private document
+        content in this public issue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does Lectoria get in the way?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Can an existing adapter override or configuration option already solve this?

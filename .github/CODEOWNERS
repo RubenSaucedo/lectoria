@@ -1,3 +1,10 @@
 # Every change requires the repository owner's review before it can merge.
 # Enforced by branch protection on main ("require review from Code Owners").
 * @RubenSaucedo
+
+# Security-sensitive surfaces: policy, CI supply chain, dependency pins, and
+# the packaged file list all deserve an explicit look on every change.
+/.github/            @RubenSaucedo
+/SECURITY.md         @RubenSaucedo
+/package.json        @RubenSaucedo
+/package-lock.json   @RubenSaucedo

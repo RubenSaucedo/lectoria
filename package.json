@@ -102,7 +102,7 @@
   "dependencies": {
     "@azure/identity": "^4.13.1",
     "@mozilla/readability": "^0.6.0",
-    "commander": "^12.1.0",
+    "commander": "^15.0.0",
     "dotenv": "^16.4.5",
     "jsdom": "^30.0.1",
     "mammoth": "^1.8.0",

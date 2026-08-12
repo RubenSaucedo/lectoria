@@ -215,10 +215,104 @@ lectoria run <source>          Run the full pipeline on a file or folder.
   --max-estimated-usd <amount> Hard ceiling; stop before Azure calls.
   -y, --yes                    Approve a cost warning non-interactively.
 
+lectoria speak                 Synthesise one piece of text and report its
+                               measured duration. See "Speaking a single line".
+  --text <text>                Text to speak.
+  --text-file <path>           Read the text from a UTF-8 file. Prefer this
+                               when the line contains quotes or newlines.
+  --out <path>                 Where to write the audio (default: speech.mp3).
+  --voice <id>                 Azure voice id, e.g. en-US-AvaMultilingualNeural.
+                               NOT a preset name. Overrides LECTORIA_SPEAK_VOICE.
+  --lang <code>                Language for the SSML envelope (default: en).
+  --json                       Result as JSON on stdout; human text on stderr.
+  --estimate-only              Project cost and duration without calling Azure.
+  --retries <count>            Retries after a failure (default: 0).
+  --timeout-ms <ms>            Request deadline (default: 120000).
+
 lectoria parse <source>        Parse a doc and print the normalized Document JSON.
 lectoria voices                List the available voice presets.
 lectoria list                  List episodes across every feed under ./out.
 ```
+
+### Speaking a single line
+
+`run` turns a document into a podcast: it parses, asks a model to write a
+script, translates, synthesises and packages. When you already have the exact
+words you want spoken, all of that is wrong — you would be paying an LLM to
+rewrite text you authored.
+
+`speak` is the direct path. Text in, one audio file out, and the thing that is
+otherwise unobtainable from the CLI: **how long the audio actually turned out to
+be**, measured by the synthesiser rather than guessed from a word count.
+
+```bash
+lectoria speak --text-file line.txt --out clip.mp3 \
+  --voice en-US-AvaMultilingualNeural --json
+```
+```json
+{
+  "path": "C:\\tmp\\clip.mp3",
+  "durationSec": 4.812,
+  "characters": 143,
+  "voice": "en-US-AvaMultilingualNeural",
+  "language": "en",
+  "region": "eastus",
+  "authKind": "apiKey",
+  "estimated": false
+}
+```
+
+That `durationSec` comes from Azure's own `audioDuration` on the synthesis
+result. It is the number you need to place speech against something else —
+video, slides, an animation — without stretching audio or guessing.
+
+**`--voice` here takes a raw Azure voice id, not a preset.** `run --voice` takes
+presets because a multi-speaker script has roles to fill; a single line has
+none. Passing a preset name is detected and explained rather than forwarded to
+Azure as a voice id.
+
+**Use `--text-file` for anything non-trivial.** A narration line with quotes,
+apostrophes or newlines does not survive cmd.exe or PowerShell quoting.
+
+#### Knowing the cost before you pay it
+
+`--estimate-only` projects the spend and runtime **without contacting Azure**,
+so a caller can show a consent prompt first:
+
+```bash
+lectoria speak --text-file line.txt --voice en-US-AvaMultilingualNeural \
+  --estimate-only --json
+```
+
+The estimate reports `estimatedDurationSec` and never `durationSec`. That is
+deliberate: if both used the same key, a caller reading `.durationSec` would
+silently receive a ±20% guess and treat it as measured. A different key turns
+that mistake into an immediate failure instead of a subtly wrong result.
+
+#### Retries are off by default
+
+Unlike `run`, `speak` does not retry. A retry is a second paid synthesis, and a
+client that saw a timeout cannot tell whether the first call also produced
+audio. Opt in with `--retries 2` when you would rather pay twice than fail.
+
+#### Telling "not set up" from "the call failed"
+
+Exit codes are distinct so a caller can branch without parsing prose, and with
+`--json` the same distinction arrives as `error.reason` on stdout:
+
+| exit | reason | meaning |
+| --- | --- | --- |
+| 0 | — | done |
+| 1 | `usage` | bad input — no text, both text flags, a preset passed as a voice |
+| 2 | `not-configured` | Azure is not set up here. **Nothing was attempted or billed.** |
+| 3 | `synthesis-failed` | configured, attempted, and the call failed |
+
+The line between 2 and 3 is the useful one: 2 is a human setting a variable, 3
+may be transient. Note that a **rejected key surfaces as a WebSocket close 1006
+("Unable to contact server"), not a 401** — verified against the live service.
+Taken at face value that sends people to debug their network, so `speak` expands
+it, lists the likely causes in order, and does not claim to know which it was,
+because the error genuinely does not say.
 
 ### Voices
 

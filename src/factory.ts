@@ -32,6 +32,18 @@ export interface CreateTtsOptions {
   defaultLanguage?: LanguageCode;
   /** Optional structured progress callback. */
   onProgress?: ProgressListener;
+  /** Deadline for each Speech request. Defaults to 120 seconds. */
+  timeoutMs?: number;
+  /**
+   * Number of transient retries after the first attempt. Defaults to 2.
+   *
+   * Pass `0` when a caller must not be billed twice for one request without
+   * having asked for it — a retry is another paid synthesis, and a client that
+   * saw a timeout cannot tell whether the first call also produced audio.
+   */
+  maxRetries?: number;
+  /** Base retry delay in milliseconds. Defaults to 500. */
+  retryDelayMs?: number;
 }
 
 export interface SpeakOptions {
@@ -101,6 +113,9 @@ export function createTTS(opts: CreateTtsOptions): TtsClient {
     resourceId: opts.resourceId,
     auth: opts.auth,
     onProgress: opts.onProgress,
+    timeoutMs: opts.timeoutMs,
+    maxRetries: opts.maxRetries,
+    retryDelayMs: opts.retryDelayMs,
   });
   const defaultLanguage = opts.defaultLanguage ?? 'en';
 

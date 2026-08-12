@@ -17,7 +17,19 @@ import {
   parseStyle,
 } from './cli-helpers.js';
 import { VOICE_PRESETS, DEFAULT_VOICE_PRESET } from './voices/presets.js';
-import type { Glossary } from './types.js';
+import type { Glossary, LanguageCode } from './types.js';
+import { createTTS } from './factory.js';
+import {
+  resolveText,
+  resolveVoice,
+  resolveSpeechEnv,
+  estimateSpeak,
+  asSynthesisFailure,
+  formatEstimate,
+  formatResult,
+  SpeakError,
+  type SpeakOutput,
+} from './speak.js';
 import { normalizeLanguageCodes } from './validation.js';
 import {
   formatCostAssessment,
@@ -186,6 +198,110 @@ program
       }
     }
   });
+
+program
+  .command('speak')
+  .description(
+    'Synthesise one piece of text to an audio file and report its measured duration.'
+  )
+  .option('--text <text>', 'Text to speak. Prefer --text-file when it contains quotes or newlines.')
+  .option('--text-file <path>', 'Read the text to speak from a file (UTF-8).')
+  .option('--out <path>', 'Where to write the audio file.', 'speech.mp3')
+  .option(
+    '--voice <id>',
+    'Azure voice id, e.g. en-US-AvaMultilingualNeural. Not a preset name — `run --voice` takes those. Overrides LECTORIA_SPEAK_VOICE.'
+  )
+  .option('--lang <code>', 'Language code for the SSML envelope (BCP-47).', 'en')
+  .option('--json', 'Print the result as JSON on stdout. Human output goes to stderr.')
+  .option(
+    '--estimate-only',
+    'Print the projected cost and duration without calling Azure. Nothing is billed.'
+  )
+  .option(
+    '--retries <count>',
+    'Retries after a failed attempt. Defaults to 0: a retry is a second paid synthesis, ' +
+      'and a client that saw a timeout cannot tell whether the first call also produced audio.',
+    '0'
+  )
+  .option('--timeout-ms <ms>', 'Deadline for the synthesis request.', '120000')
+  .action(
+    async (opts: {
+      text?: string;
+      textFile?: string;
+      out: string;
+      voice?: string;
+      lang: string;
+      json?: boolean;
+      estimateOnly?: boolean;
+      retries: string;
+      timeoutMs: string;
+    }) => {
+      // Human output goes to stderr throughout so that `--json` stdout stays
+      // parseable when piped, and so progress never corrupts the payload.
+      const say = (line: string) => process.stderr.write(`${line}\n`);
+      try {
+        const text = await resolveText(opts);
+        const voice = resolveVoice(opts.voice);
+
+        if (opts.estimateOnly) {
+          const estimate = estimateSpeak(text, voice);
+          if (opts.json) console.log(JSON.stringify(estimate, null, 2));
+          say(formatEstimate(estimate));
+          return;
+        }
+
+        // Resolved before synthesis so a misconfigured machine is told so
+        // without a call being attempted.
+        const env = resolveSpeechEnv();
+        const retries = parseNonNegativeNumber(opts.retries, '--retries') ?? 0;
+        const timeoutMs = parseNonNegativeNumber(opts.timeoutMs, '--timeout-ms');
+
+        const tts = createTTS({
+          region: env.region,
+          resourceId: env.resourceId,
+          auth: env.auth,
+          defaultVoice: voice,
+          defaultLanguage: opts.lang as LanguageCode,
+          maxRetries: retries,
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        });
+
+        let audio;
+        try {
+          audio = await tts.speakToFile(text, resolve(opts.out));
+        } catch (err) {
+          throw asSynthesisFailure(err);
+        }
+
+        const result: SpeakOutput = {
+          path: audio.path,
+          durationSec: audio.durationSec,
+          characters: text.length,
+          voice,
+          language: opts.lang,
+          region: env.region,
+          authKind: env.authKind,
+          estimated: false,
+        };
+        if (opts.json) console.log(JSON.stringify(result, null, 2));
+        say(formatResult(result));
+      } catch (err) {
+        const speakError =
+          err instanceof SpeakError ? err : new SpeakError('usage', (err as Error).message, { cause: err });
+        // A caller that asked for JSON gets JSON even when things fail —
+        // otherwise it has to parse prose to find out why, which is exactly
+        // the ambiguity between "not set up" and "the call failed" that this
+        // command exists to remove.
+        if (opts.json) {
+          console.log(
+            JSON.stringify({ error: { reason: speakError.reason, message: speakError.message } }, null, 2)
+          );
+        }
+        say(`lectoria speak: ${speakError.message}`);
+        process.exitCode = speakError.exitCode;
+      }
+    }
+  );
 
 program
   .command('list')

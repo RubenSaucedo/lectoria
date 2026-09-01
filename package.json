@@ -100,34 +100,34 @@
   },
   "homepage": "https://github.com/RubenSaucedo/lectoria#readme",
   "dependencies": {
-    "@azure/identity": "^4.13.1",
+    "@azure/identity": "^4.13.2",
     "@mozilla/readability": "^0.6.0",
     "commander": "^12.1.0",
     "dotenv": "^16.4.5",
     "jsdom": "^30.0.1",
-    "mammoth": "^1.8.0",
+    "mammoth": "^1.12.2",
     "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
     "node-id3": "^0.2.6",
-    "openai": "^7.4.0",
+    "openai": "^7.8.0",
     "pdf-parse": "^2.4.5",
     "podcast": "^2.0.1",
     "proper-lockfile": "^4.1.2",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/jsdom": "^21.1.7",
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.4.0",
     "@types/proper-lockfile": "^4.1.4",
-    "eslint": "^10.8.0",
-    "globals": "^17.8.0",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
     "rimraf": "^6.0.1",
-    "tsx": "^4.19.1",
+    "tsx": "^4.23.12",
     "typescript": "^5.6.2",
-    "typescript-eslint": "^8.65.0",
-    "vitest": "^4.1.10"
+    "typescript-eslint": "^8.68.0",
+    "vitest": "^4.1.11"
   }
 }
